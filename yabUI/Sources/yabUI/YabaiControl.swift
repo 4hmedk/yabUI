@@ -372,9 +372,22 @@ struct RecentActivityCard: View {
 struct WindowMapCard: View {
     @EnvironmentObject private var model: YabaiModel
 
+    private var visibleWindows: [YabaiWindow] {
+        model.windows.filter { $0.isRenderable }
+    }
+
+    private var spaceCount: Int {
+        Set(visibleWindows.map(\.space)).count
+    }
+
+    private var mapHeight: CGFloat {
+        let rows = max(1, (spaceCount + 2) / 3)
+        return max(240, min(390, CGFloat(rows) * 112 + 24))
+    }
+
     var body: some View {
-        Card(title: "Window map", subtitle: "A visual overview of the managed windows on your desktop.") {
-            if model.spaces.isEmpty {
+        Card(title: "Window map", subtitle: "All visible windows in one live map. Click a tile to focus that window.") {
+            if visibleWindows.isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: model.windows.isEmpty ? "square.grid.2x2" : "eye.slash")
                         .font(.title2).foregroundStyle(.secondary)
@@ -386,111 +399,190 @@ struct WindowMapCard: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(displayIndices, id: \.self) { displayIndex in
-                        let displaySpaces = model.spaces
-                            .filter { $0.display == displayIndex }
-                            .sorted { $0.index < $1.index }
-                        VStack(alignment: .leading, spacing: 7) {
-                            Label("Display \(displayIndex)", systemImage: "display.2")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 10) {
-                                    ForEach(displaySpaces) { space in
-                                        OverviewSpaceMapTile(
-                                            space: space,
-                                            displayFrame: model.displays.first(where: { $0.index == displayIndex })?.frame
-                                        )
-                                    }
-                                }
+                GeometryReader { geometry in
+                    let mapGeometry = UnifiedWindowMapLayout.geometry(windows: visibleWindows, canvasSize: geometry.size)
+                    ZStack(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 13)
+                            .fill(Color.black.opacity(0.16))
+                        UnifiedMapGridBackground()
+                            .clipShape(RoundedRectangle(cornerRadius: 13))
+
+                        ForEach(mapGeometry.spaceLabels.keys.sorted(), id: \.self) { space in
+                            if let labelRect = mapGeometry.spaceLabels[space] {
+                                Text("S\(space)")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(.black.opacity(0.24), in: Capsule())
+                                    .position(x: labelRect.midX, y: labelRect.midY)
+                            }
+                        }
+
+                        ForEach(visibleWindows) { window in
+                            if let rect = mapGeometry.windowRects[window.id] {
+                                UnifiedOverviewWindowTile(window: window, rect: rect)
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 13))
                 }
+                .frame(height: mapHeight)
+
+                let minimized = model.windows.filter { $0.isMinimized || $0.isHidden }.count
+                HStack(spacing: 8) {
+                    Image(systemName: "square.grid.3x3.fill")
+                        .foregroundStyle(.blue)
+                    Text("\(visibleWindows.count) visible windows across \(spaceCount) spaces")
+                    if minimized > 0 {
+                        Text("· \(minimized) minimized or hidden")
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var displayIndices: [Int] {
-        Array(Set(model.displays.map(\.index) + model.spaces.map(\.display))).sorted()
     }
 }
 
-struct OverviewSpaceMapTile: View {
+struct UnifiedMapGridBackground: View {
+    var body: some View {
+        Canvas { context, size in
+            let step: CGFloat = 28
+            var path = Path()
+            stride(from: step, to: size.width, by: step).forEach { x in
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+            }
+            stride(from: step, to: size.height, by: step).forEach { y in
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+            }
+            context.stroke(path, with: .color(.white.opacity(0.035)), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct UnifiedOverviewWindowTile: View {
     @EnvironmentObject private var model: YabaiModel
-    let space: YabaiSpace
-    let displayFrame: YabaiFrame?
-
-    private var visibleWindows: [YabaiWindow] {
-        model.windows.filter { $0.space == space.index && $0.isRenderable }
-    }
-
-    private var tiledWindows: [YabaiWindow] {
-        visibleWindows.filter { !$0.isOverlayWindow }
-    }
-
-    private var floatingWindows: [YabaiWindow] {
-        visibleWindows.filter { $0.isOverlayWindow }
-    }
+    let window: YabaiWindow
+    let rect: CGRect
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: space.isFocused ? "circle.inset.filled" : "circle")
-                    .foregroundStyle(space.isFocused ? .blue : .secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Space \(space.index)")
-                        .font(.caption.weight(.bold))
-                    Text("\(space.windowCount) \(space.windowCount == 1 ? "window" : "windows")")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(space.layout)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        Button { model.focusWindow(window.id) } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(window.isFocused ? Color.blue.opacity(0.58) : Color.white.opacity(0.16))
+                AppIconView(
+                    appName: window.app.isEmpty ? "Unknown app" : window.app,
+                    size: min(38, max(16, min(rect.width, rect.height) * 0.34))
+                )
             }
-
-            Group {
-                if !floatingWindows.isEmpty {
-                    FloatingWindowStrip(windows: floatingWindows)
-                } else {
-                    Color.clear
-                }
+            .frame(width: rect.width, height: rect.height)
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(window.isFocused ? Color.blue : Color.white.opacity(0.22), lineWidth: window.isFocused ? 2 : 1)
             }
-            .frame(height: 25)
-
-            GeometryReader { geometry in
-                let bounds = WindowMapBounds(windows: tiledWindows, displayFrame: displayFrame)
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(Color.black.opacity(0.16))
-                    if tiledWindows.isEmpty {
-                        VStack(spacing: 3) {
-                            Image(systemName: visibleWindows.isEmpty ? "rectangle.dashed" : "eye.slash")
-                            Text(visibleWindows.isEmpty ? "No visible tiles" : "Floating / hidden")
-                                .font(.caption2)
-                        }
-                        .foregroundStyle(.secondary.opacity(0.7))
-                        .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                    } else {
-                        ForEach(tiledWindows) { window in
-                            WindowTile(window: window, bounds: bounds, canvasSize: geometry.size)
-                        }
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-            }
-            .frame(height: 94)
         }
-        .padding(9)
-        .frame(width: 226, height: 170)
-        .background(space.isFocused ? Color.blue.opacity(0.13) : Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(space.isFocused ? Color.blue.opacity(0.55) : Color.white.opacity(0.10), lineWidth: space.isFocused ? 1.5 : 1))
-        .contentShape(Rectangle())
-        .onTapGesture { model.focusSpace(space.index) }
-        .help("Focus Space \(space.index)")
+        .buttonStyle(.plain)
+        .position(x: rect.midX, y: rect.midY)
+        .help("Focus \(window.app.isEmpty ? "window" : window.app): \(window.title.isEmpty ? "Untitled" : window.title)")
+    }
+}
+
+struct UnifiedWindowMapGeometry {
+    let windowRects: [Int: CGRect]
+    let spaceLabels: [Int: CGRect]
+}
+
+enum UnifiedWindowMapLayout {
+    static func geometry(windows: [YabaiWindow], canvasSize: CGSize) -> UnifiedWindowMapGeometry {
+        let inset: CGFloat = 12
+        let gap: CGFloat = 10
+        let groups = Dictionary(grouping: windows, by: { $0.space })
+            .sorted { $0.key < $1.key }
+        let columns = max(1, min(3, groups.count <= 2 ? groups.count : 3))
+        let rows = max(1, Int(ceil(Double(groups.count) / Double(columns))))
+        let availableWidth = max(canvasSize.width - inset * 2, 1)
+        let availableHeight = max(canvasSize.height - inset * 2, 1)
+        let slotWidth = max((availableWidth - CGFloat(columns - 1) * gap) / CGFloat(columns), 1)
+        let slotHeight = max((availableHeight - CGFloat(rows - 1) * gap) / CGFloat(rows), 1)
+
+        var windowRects: [Int: CGRect] = [:]
+        var spaceLabels: [Int: CGRect] = [:]
+
+        for (index, group) in groups.enumerated() {
+            let column = index % columns
+            let row = index / columns
+            let slot = CGRect(
+                x: inset + CGFloat(column) * (slotWidth + gap),
+                y: inset + CGFloat(row) * (slotHeight + gap),
+                width: slotWidth,
+                height: slotHeight
+            )
+            let labelHeight: CGFloat = 18
+            spaceLabels[group.key] = CGRect(x: slot.minX + 8, y: slot.minY + 5, width: 36, height: 16)
+            let content = CGRect(
+                x: slot.minX + 5,
+                y: slot.minY + labelHeight + 5,
+                width: max(slot.width - 10, 1),
+                height: max(slot.height - labelHeight - 10, 1)
+            )
+            windowRects.merge(packedRects(group.value, in: content)) { _, new in new }
+        }
+        return UnifiedWindowMapGeometry(windowRects: windowRects, spaceLabels: spaceLabels)
+    }
+
+    private static func packedRects(_ windows: [YabaiWindow], in rect: CGRect) -> [Int: CGRect] {
+        guard !windows.isEmpty else { return [:] }
+        let sorted = windows.sorted {
+            let left = $0.frame
+            let right = $1.frame
+            if left?.y != right?.y { return (left?.y ?? 0) < (right?.y ?? 0) }
+            return (left?.x ?? 0) < (right?.x ?? 0)
+        }
+
+        var rows: [[YabaiWindow]] = []
+        for window in sorted {
+            let y = window.frame?.y ?? 0
+            if let last = rows.indices.last,
+               let anchor = rows[last].compactMap(\.frame).map(\.y).min(),
+               abs(y - anchor) <= 28 {
+                rows[last].append(window)
+            } else {
+                rows.append([window])
+            }
+        }
+
+        let rowHeights = rows.map { row in max(row.compactMap(\.frame).map(\.h).max() ?? 1, 1) }
+        let rowWidths = rows.map { row in row.reduce(CGFloat.zero) { $0 + max($1.frame?.w ?? 1, 1) } }
+        let sourceHeight = rowHeights.reduce(0, +) + CGFloat(max(rows.count - 1, 0)) * 8
+        let sourceWidth = rowWidths.max() ?? 1
+        let scale = min(
+            rect.width / max(sourceWidth + 8, 1),
+            rect.height / max(sourceHeight + 8, 1)
+        )
+
+        var result: [Int: CGRect] = [:]
+        var y = rect.minY + max((rect.height - sourceHeight * scale) / 2, 0)
+        for (rowIndex, row) in rows.enumerated() {
+            let widths = row.map { max($0.frame?.w ?? 1, 1) * scale }
+            let rowGap = CGFloat(max(row.count - 1, 0)) * 6
+            let rowWidth = widths.reduce(0, +) + rowGap
+            var x = rect.minX + max((rect.width - rowWidth) / 2, 0)
+            let rowHeight = rowHeights[rowIndex] * scale
+            for (windowIndex, window) in row.enumerated() {
+                let width = widths[windowIndex]
+                result[window.id] = CGRect(x: x, y: y, width: max(width, 18), height: max(rowHeight, 18))
+                x += width + 6
+            }
+            y += rowHeight + 8
+        }
+        return result
     }
 }
 
@@ -600,6 +692,7 @@ struct FloatingWindowStrip: View {
 }
 
 struct WindowTile: View {
+    @EnvironmentObject private var model: YabaiModel
     let window: YabaiWindow
     let bounds: WindowMapBounds
     let canvasSize: CGSize
@@ -614,6 +707,7 @@ struct WindowTile: View {
             .background(window.isFocused ? Color.blue.opacity(0.52) : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(window.isFocused ? Color.blue : Color.white.opacity(0.16), lineWidth: window.isFocused ? 2 : 1))
             .position(x: tileRect.midX, y: tileRect.midY)
+            .onTapGesture { model.focusWindow(window.id) }
             .help("\(window.app.isEmpty ? "Window" : window.app) — \(window.title.isEmpty ? "Untitled" : window.title)")
         }
     }
