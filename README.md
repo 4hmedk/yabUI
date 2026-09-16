@@ -33,6 +33,24 @@ yabai allows you to control your windows, spaces and displays freely using an in
 The primary function of yabai is tiling window management; automatically modifying your window layout using a binary space partitioning algorithm to allow you to focus on the content of your windows without distractions.
 Additional features of yabai include focus-follows-mouse, disabling animations for switching spaces, creating spaces past the limit of 16 spaces, and much more.
 
+## yabUI graphical interface
+
+This fork includes **yabUI**, a native SwiftUI companion app under
+[`yabUI/`](yabUI/). yabUI gives Yabai a visual workspace map, drag-and-drop
+window and space management, service controls, and a menu-bar status item.
+
+The release app bundles a universal Yabai executable, allowing users to install
+yabUI without separately installing Yabai first. macOS Accessibility permission
+is still required, and advanced scripting-addition features retain the upstream
+Yabai requirements.
+
+Build the GUI and its drag-to-Applications installer with:
+
+```sh
+./yabUI/scripts/build_app.sh
+./yabUI/scripts/package_dmg.sh
+```
+
 ## Installation and Configuration
 
 - The [&nearr;&nbsp;yabai&nbsp;wiki][yabai-wiki] has both brief and detailed installation instructions for multiple installation methods, and also explains how to uninstall yabai completely.
