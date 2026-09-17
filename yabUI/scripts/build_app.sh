@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="${0:A:h}"
 PROJECT="${ROOT:h}"
+REPO="${PROJECT:h}"
 DIST="$PROJECT/dist"
 OUT="$DIST/yabUI.app"
 rm -rf "$OUT"
@@ -12,12 +13,16 @@ SWIFTC="${SWIFTC:-/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDef
 SDK="${SDK:-/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk}"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
-"$SWIFTC" "$PROJECT/Sources/yabUI/YabaiControl.swift" -o "$OUT/Contents/MacOS/yabUI" \
-  -framework SwiftUI -framework AppKit \
-  -sdk "$SDK" \
-  -target arm64-apple-macosx26.0 \
-  -module-cache-path /private/tmp/yabui-module-cache \
-  -parse-as-library
+for ARCH in arm64 x86_64; do
+  "$SWIFTC" "$PROJECT/Sources/yabUI/YabaiControl.swift" -o "$DIST/yabUI-$ARCH" \
+    -framework SwiftUI -framework AppKit \
+    -sdk "$SDK" \
+    -target "$ARCH-apple-macosx26.0" \
+    -module-cache-path "/private/tmp/yabui-module-cache-$ARCH" \
+    -parse-as-library
+done
+lipo -create "$DIST/yabUI-arm64" "$DIST/yabUI-x86_64" -output "$OUT/Contents/MacOS/yabUI"
+rm -f "$DIST/yabUI-arm64" "$DIST/yabUI-x86_64"
 
 cp "$PROJECT/Resources/Info.plist" "$OUT/Contents/Info.plist"
 cp "$PROJECT/Resources/yabUI.png" "$OUT/Contents/Resources/yabUI.png"
@@ -34,12 +39,23 @@ if [[ -z "$YABAI_BIN" ]]; then
     fi
   done
 fi
+if [[ -z "$YABAI_BIN" && -x "$REPO/bin/yabai" ]]; then
+  YABAI_BIN="$REPO/bin/yabai"
+fi
+if [[ -z "$YABAI_BIN" ]]; then
+  echo "No runtime found; building the bundled runtime from the repository source." >&2
+  make -C "$REPO" install
+  YABAI_BIN="$REPO/bin/yabai"
+fi
 if [[ -n "$YABAI_BIN" && -x "$YABAI_BIN" ]]; then
   cp "$YABAI_BIN" "$OUT/Contents/Resources/yabai"
   chmod +x "$OUT/Contents/Resources/yabai"
 else
-  echo "warning: no Yabai binary found; this build requires a system install at runtime" >&2
+  echo "error: no bundled runtime was produced" >&2
+  exit 1
 fi
 
-codesign --force --deep --sign - "$OUT" >/dev/null 2>&1 || true
+codesign --force --sign - "$OUT/Contents/Resources/yabai" >/dev/null
+codesign --force --deep --options runtime --sign - "$OUT" >/dev/null
+codesign --verify --deep --strict "$OUT"
 echo "$OUT"

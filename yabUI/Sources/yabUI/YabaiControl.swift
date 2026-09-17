@@ -1,6 +1,65 @@
 import SwiftUI
 import AppKit
+import Foundation
 import UniformTypeIdentifiers
+
+enum ServicePhase: Equatable {
+    case unknown
+    case stopped
+    case starting
+    case running
+    case stopping
+    case restarting
+    case unavailable
+
+    var title: String {
+        switch self {
+        case .unknown: return "Checking service"
+        case .stopped: return "Yabai is stopped"
+        case .starting: return "Starting Yabai"
+        case .running: return "Yabai is running"
+        case .stopping: return "Stopping Yabai"
+        case .restarting: return "Restarting Yabai"
+        case .unavailable: return "Yabai unavailable"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .unknown: return "Checking the bundled runtime."
+        case .stopped: return "Start the service to manage your windows."
+        case .starting: return "Waiting for the service to become ready…"
+        case .running: return "Your window manager is ready for commands."
+        case .stopping: return "Finishing the current service operation…"
+        case .restarting: return "Reconnecting to the workspace…"
+        case .unavailable: return "Check Accessibility permission, then try again."
+        }
+    }
+
+    var isTransitioning: Bool {
+        switch self {
+        case .starting, .stopping, .restarting: return true
+        default: return false
+        }
+    }
+}
+
+enum UpdateStatus: Equatable {
+    case idle
+    case checking
+    case upToDate
+    case available(UpdateInfo)
+    case downloading
+    case downloaded(URL)
+    case failed(String)
+}
+
+struct UpdateInfo: Equatable {
+    let version: String
+    let releaseURL: URL
+    let downloadURL: URL?
+    let publishedAt: Date?
+}
 
 @main
 struct YabUIApp: App {
@@ -78,12 +137,11 @@ struct ContentView: View {
             }
         }
         .task {
-            model.refresh()
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 900_000_000)
-                guard !Task.isCancelled else { break }
-                model.refresh()
-            }
+            model.startPolling()
+        }
+        .sheet(isPresented: $model.showOnboarding) {
+            OnboardingView()
+                .environmentObject(model)
         }
     }
 }
@@ -111,9 +169,9 @@ struct HorizontalTabBar: View {
                     .fill(model.isRunning ? Color.green : Color.secondary)
                     .frame(width: 9, height: 9)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.isRunning ? "Yabai is running" : "Yabai is stopped")
+                    Text(model.servicePhase.title)
                         .font(.caption.weight(.semibold))
-                    Text(model.version.isEmpty ? "Not detected" : model.version)
+                    Text(model.version.isEmpty ? model.servicePhase.detail : model.version)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -155,6 +213,142 @@ struct HorizontalTabButton: View {
     }
 }
 
+struct OnboardingView: View {
+    @EnvironmentObject private var model: YabaiModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var step = 0
+
+    private let steps = ["Welcome", "Permission", "Setup", "Ready"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.3.group.fill")
+                        .foregroundStyle(.blue)
+                    Text("yabUI setup")
+                        .font(.headline.weight(.semibold))
+                }
+                Spacer()
+                Text("Step \(step + 1) of \(steps.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(20)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 18) {
+                switch step {
+                case 0:
+                    OnboardingPage(
+                        icon: "sparkles",
+                        title: "Welcome to yabUI",
+                        message: "A small native control surface for your spaces, windows, and layout commands. This quick setup takes less than a minute."
+                    ) {
+                        Label("See your desktop as a live map", systemImage: "square.grid.2x2.fill")
+                        Label("Move and split windows with drag and drop", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                        Label("Control the service from the app or menu bar", systemImage: "menubar.rectangle")
+                    }
+                case 1:
+                    OnboardingPage(
+                        icon: "lock.shield",
+                        title: "Allow window control",
+                        message: "macOS Accessibility permission lets the bundled runtime read and arrange windows. yabUI will remain calm and usable until permission is granted."
+                    ) {
+                        Button("Open Accessibility settings") {
+                            model.openAccessibilitySettings()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Text("Enable yabUI in System Settings → Privacy & Security → Accessibility, then return here.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                case 2:
+                    OnboardingPage(
+                        icon: "slider.horizontal.3",
+                        title: "Choose a safe starting setup",
+                        message: "yabUI uses the bundled runtime and a private launch service. It does not install a separate command-line copy or recreate the legacy service entry."
+                    ) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("BSP layout with automatic split direction", systemImage: "rectangle.split.3x1")
+                            Label("No focus changes while you drag a tile", systemImage: "cursorarrow.motionlines")
+                            Label("Service state is verified before the UI shows it as ready", systemImage: "checkmark.shield")
+                        }
+                        Button {
+                            model.applyRecommendedConfiguration()
+                        } label: {
+                            Label(model.servicePhase.isTransitioning ? "Starting…" : "Start yabUI service", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.servicePhase.isTransitioning)
+                    }
+                default:
+                    OnboardingPage(
+                        icon: "checkmark.circle.fill",
+                        title: "You’re ready",
+                        message: "Use Overview for a quick read, Workspace for direct manipulation, and the menu-bar surface for fast controls. You can reopen this guide from Settings."
+                    ) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(model.isRunning ? Color.green : Color.secondary)
+                                .frame(width: 8, height: 8)
+                            Text(model.servicePhase.title)
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(28)
+
+            Divider()
+
+            HStack {
+                Button("Back") { step = max(0, step - 1) }
+                    .disabled(step == 0)
+                Spacer()
+                Button(step == steps.count - 1 ? "Finish" : "Continue") {
+                    if step == steps.count - 1 {
+                        model.completeOnboarding()
+                        dismiss()
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.18)) { step += 1 }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(20)
+        }
+        .frame(width: 560, height: 430)
+    }
+}
+
+struct OnboardingPage<Content: View>: View {
+    let icon: String
+    let title: String
+    let message: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Image(systemName: icon)
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(.blue)
+            Text(title)
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+            Text(message)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                content
+            }
+                .padding(.top, 4)
+        }
+    }
+}
+
 struct StatusSurfaceView: View {
     @EnvironmentObject private var model: YabaiModel
     @StateObject private var dropCoordinator = WorkspaceDropCoordinator()
@@ -174,7 +368,7 @@ struct StatusSurfaceView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("yabUI")
                         .font(.headline.weight(.bold))
-                    Text(model.isRunning ? "Yabai is running" : "Yabai is stopped")
+                    Text(model.servicePhase.title)
                         .font(.caption)
                         .foregroundStyle(model.isRunning ? .green : .secondary)
                 }
@@ -189,13 +383,14 @@ struct StatusSurfaceView: View {
             Button {
                 model.toggleService()
             } label: {
-                Label(model.isRunning ? "Pause Yabai" : "Start Yabai", systemImage: model.isRunning ? "pause.fill" : "play.fill")
+                Label(model.isRunning ? "Stop Yabai" : "Start Yabai", systemImage: model.isRunning ? "stop.fill" : "play.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 7)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .disabled(model.servicePhase.isTransitioning)
 
             HStack(spacing: 8) {
                 Button { model.restartService() } label: {
@@ -203,7 +398,7 @@ struct StatusSurfaceView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .disabled(!model.isRunning)
+                .disabled(model.servicePhase.isTransitioning)
                 Button {
                     NSApp.activate(ignoringOtherApps: true)
                     NSApp.windows.first(where: { $0.title == "yabUI" })?.makeKeyAndOrderFront(nil)
@@ -247,14 +442,6 @@ struct StatusSurfaceView: View {
         }
         .padding(14)
         .frame(width: 430)
-        .task {
-            model.refresh()
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                guard !Task.isCancelled else { break }
-                model.refresh()
-            }
-        }
         .onPreferenceChange(WorkspaceSpaceFrameKey.self) { frames in
             dropCoordinator.spaceFrames = frames
         }
@@ -443,9 +630,9 @@ struct StatusCard: View {
         VStack(spacing: 15) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.isRunning ? "Yabai is active" : "Yabai is not running")
+                    Text(model.servicePhase.title)
                         .font(.title2.weight(.bold))
-                    Text(model.isRunning ? "Your window manager is ready for commands." : "Start the service to manage your windows.")
+                    Text(model.servicePhase.detail)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -465,10 +652,11 @@ struct StatusCard: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .disabled(model.servicePhase.isTransitioning)
             HStack(spacing: 10) {
                 Button { model.restartService() } label: { Label("Restart", systemImage: "arrow.clockwise") }
                     .buttonStyle(.bordered)
-                    .disabled(!model.isRunning)
+                    .disabled(model.servicePhase.isTransitioning)
                 Button { model.refresh() } label: { Label("Refresh", systemImage: "arrow.triangle.2.circlepath") }
                     .buttonStyle(.bordered)
             }
@@ -516,7 +704,7 @@ struct OverviewView: View {
             VStack(alignment: .leading, spacing: 16) {
                 PageHeader(title: "Overview", subtitle: "A calmer way to control your macOS tiling setup.")
                 StatusCard()
-                if let dataError = model.dataError {
+                if model.shouldShowWarning, let dataError = model.dataError {
                     DataStatusBanner(message: dataError)
                 }
                 HStack(spacing: 14) {
@@ -1009,7 +1197,7 @@ struct WorkspaceView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             PageHeader(title: "Workspace", subtitle: "Displays, spaces, and windows in one actionable hierarchy.")
-            if let dataError = model.dataError {
+            if model.shouldShowWarning, let dataError = model.dataError {
                 DataStatusBanner(message: dataError)
             }
             if spaceReorderNeedsScriptingAddition {
@@ -1486,7 +1674,7 @@ struct WindowsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             PageHeader(title: "Windows", subtitle: "Inspect and focus every managed window.")
-            if let dataError = model.dataError {
+            if model.shouldShowWarning, let dataError = model.dataError {
                 DataStatusBanner(message: dataError)
             }
             if model.windows.isEmpty {
@@ -1521,7 +1709,7 @@ struct SpacesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             PageHeader(title: "Spaces & displays", subtitle: "See your desktops and jump between them.")
-            if let dataError = model.dataError {
+            if model.shouldShowWarning, let dataError = model.dataError {
                 DataStatusBanner(message: dataError)
             }
             if model.spaces.isEmpty {
@@ -1597,6 +1785,55 @@ struct SettingsView: View {
                         NSWorkspace.shared.open(url)
                     }
                 }
+            }
+            Section("Updates") {
+                HStack {
+                    Text("Installed version")
+                    Spacer()
+                    Text(model.currentVersion)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+                Button {
+                    model.checkForUpdates()
+                } label: {
+                    Label(model.updateStatus == .checking ? "Checking…" : "Check for updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(model.updateStatus == .checking)
+                switch model.updateStatus {
+                case .available(let update):
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("yabUI \(update.version) is available")
+                            .font(.subheadline.weight(.semibold))
+                        Button("Download update") { model.downloadUpdate(update) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                case .downloading:
+                    Label("Downloading installer…", systemImage: "arrow.down.circle")
+                        .foregroundStyle(.secondary)
+                case .downloaded(let url):
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Installer downloaded")
+                            .font(.subheadline.weight(.semibold))
+                        Button("Open installer") { NSWorkspace.shared.open(url) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                case .upToDate:
+                    Label("You’re running the latest release.", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case .failed(let message):
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                default:
+                    EmptyView()
+                }
+            }
+            Section("Setup") {
+                Button("Show onboarding guide") { model.showOnboarding = true }
+                Text("The guide explains Accessibility permission and the bundled service setup.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Button("Refresh settings") { model.refreshSettings() }
@@ -1902,9 +2139,55 @@ struct ActivityLog: Identifiable {
     let id = UUID(); let date = Date(); let command: String; let output: String; let success: Bool
 }
 
+struct CommandResult {
+    let success: Bool
+    let output: String
+}
+
+struct RuntimeSnapshot {
+    let runtimeAvailable: Bool
+    let version: String
+    let isRunning: Bool
+    let windows: [YabaiWindow]
+    let spaces: [YabaiSpace]
+    let displays: [YabaiDisplay]
+    let error: String?
+}
+
+private struct GitHubRelease: Decodable {
+    struct Asset: Decodable {
+        let name: String
+        let browserDownloadURL: URL
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
+        }
+    }
+
+    let tagName: String
+    let htmlURL: URL
+    let publishedAt: Date?
+    let assets: [Asset]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+        case publishedAt = "published_at"
+        case assets
+    }
+}
+
+private enum ServiceOperation {
+    case start, stop, restart
+}
+
 @MainActor
 final class YabaiModel: ObservableObject {
     @Published var isRunning = false
+    @Published var servicePhase: ServicePhase = .unknown
+    @Published var serviceError: String?
+    @Published var isRefreshing = false
     @Published var version = ""
     @Published var windows: [YabaiWindow] = []
     @Published var spaces: [YabaiSpace] = []
@@ -1913,36 +2196,334 @@ final class YabaiModel: ObservableObject {
     @Published var settings = YabaiSettings()
     @Published var dataError: String?
     @Published var spaceReorderUnavailable = false
+    @Published var showOnboarding: Bool
+    @Published var updateStatus: UpdateStatus = .idle
 
     private let decoder = JSONDecoder()
     private let systemYabaiCandidates = ["/opt/homebrew/bin/yabai", "/usr/local/bin/yabai", "/usr/bin/yabai"]
+    private let serviceLabel = "com.yabui.runtime"
+    let currentVersion: String
+    private var refreshTask: Task<Void, Never>?
+    private var pollingTask: Task<Void, Never>?
+    private var serviceTask: Task<Void, Never>?
+
+    init() {
+        currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"
+        showOnboarding = !UserDefaults.standard.bool(forKey: "yabUI.onboarding.complete")
+    }
+
     private var yabaiCandidates: [String] {
         let bundled = Bundle.main.path(forResource: "yabai", ofType: nil)
         return ([bundled].compactMap { $0 } + systemYabaiCandidates)
     }
-    private var yabaiPath: String { yabaiCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "/opt/homebrew/bin/yabai" }
+    private var yabaiPath: String { yabaiCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "" }
+    private var servicePlistURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent("\(serviceLabel).plist")
+    }
+    private var userID: String { String(getuid()) }
+    var shouldShowWarning: Bool { isRunning && dataError != nil }
+
+    func startPolling() {
+        guard pollingTask == nil else { return }
+        refresh()
+        pollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                guard !Task.isCancelled else { break }
+                self?.refresh()
+            }
+        }
+    }
 
     func refresh() {
-        dataError = nil
-        version = command(["--version"], record: false).output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let status = command(["-m", "query", "--windows"], record: false)
-        isRunning = status.success
-        if isRunning {
-            windows = decode(["-m", "query", "--windows"], label: "windows", as: [YabaiWindow].self) ?? []
-            spaces = decode(["-m", "query", "--spaces"], label: "spaces", as: [YabaiSpace].self) ?? []
-            displays = decode(["-m", "query", "--displays"], label: "displays", as: [YabaiDisplay].self) ?? []
-            refreshSettings()
-        } else {
-            windows = []; spaces = []; displays = []
-            let message = status.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !message.isEmpty { dataError = message }
+        guard refreshTask == nil else { return }
+        let path = yabaiPath
+        isRefreshing = true
+        refreshTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let snapshot = Self.readSnapshot(path: path)
+            await self?.apply(snapshot)
         }
     }
 
     func toggleService() { isRunning ? stopService() : startService() }
-    func startService() { _ = command(["--start-service"]); refresh() }
-    func stopService() { _ = command(["--stop-service"]); refresh() }
-    func restartService() { _ = command(["--restart-service"]); refresh() }
+    func startService() { runServiceOperation(.start) }
+    func stopService() { runServiceOperation(.stop) }
+    func restartService() { runServiceOperation(.restart) }
+
+    func completeOnboarding() {
+        UserDefaults.standard.set(true, forKey: "yabUI.onboarding.complete")
+        showOnboarding = false
+    }
+
+    func checkForUpdates() {
+        updateStatus = .checking
+        guard let url = URL(string: "https://api.github.com/repos/4hmedk/yabUI/releases/latest") else { return }
+        let installedVersion = currentVersion
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                var request = URLRequest(url: url)
+                request.setValue("yabUI/\(installedVersion)", forHTTPHeaderField: "User-Agent")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let release = try decoder.decode(GitHubRelease.self, from: data)
+                let version = Self.normalizedVersion(release.tagName)
+                let asset = release.assets.first(where: { $0.name.lowercased().hasSuffix(".dmg") })
+                let info = UpdateInfo(version: version, releaseURL: release.htmlURL, downloadURL: asset?.browserDownloadURL, publishedAt: release.publishedAt)
+                self.updateStatus = Self.isNewer(version, than: installedVersion) ? .available(info) : .upToDate
+            } catch {
+                self.updateStatus = .failed("Could not check for updates right now. You can open the release page to try manually.")
+            }
+        }
+    }
+
+    func downloadUpdate(_ update: UpdateInfo) {
+        guard let url = update.downloadURL else {
+            NSWorkspace.shared.open(update.releaseURL)
+            return
+        }
+        updateStatus = .downloading
+        Task { [weak self] in
+            do {
+                let (temporaryURL, response) = try await URLSession.shared.download(from: url)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+                let destination = downloads.appendingPathComponent("yabUI-\(update.version).dmg")
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(at: temporaryURL, to: destination)
+                self?.updateStatus = .downloaded(destination)
+                NSWorkspace.shared.activateFileViewerSelecting([destination])
+            } catch {
+                self?.updateStatus = .failed("The update download could not be completed.")
+            }
+        }
+    }
+
+    func openReleasePage() {
+        if case .available(let update) = updateStatus {
+            NSWorkspace.shared.open(update.releaseURL)
+        } else if let url = URL(string: "https://github.com/4hmedk/yabUI/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private static func normalizedVersion(_ value: String) -> String {
+        value.replacingOccurrences(of: "yabUI-v", with: "", options: [.caseInsensitive])
+            .replacingOccurrences(of: "v", with: "", options: [.caseInsensitive])
+    }
+
+    private static func isNewer(_ candidate: String, than installed: String) -> Bool {
+        let lhs = normalizedVersion(candidate).split(separator: ".").compactMap { Int($0) }
+        let rhs = normalizedVersion(installed).split(separator: ".").compactMap { Int($0) }
+        for index in 0..<max(lhs.count, rhs.count) {
+            let left = index < lhs.count ? lhs[index] : 0
+            let right = index < rhs.count ? rhs[index] : 0
+            if left != right { return left > right }
+        }
+        return false
+    }
+
+    func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func applyRecommendedConfiguration() {
+        if !isRunning {
+            startService()
+            return
+        }
+        setConfig("mouse_follows_focus", "off")
+        setConfig("focus_follows_mouse", "off")
+        setSpaceConfig("layout", "bsp")
+        setSpaceConfig("split_type", "auto")
+        refresh()
+    }
+
+    private func runServiceOperation(_ operation: ServiceOperation) {
+        guard serviceTask == nil, !servicePhase.isTransitioning else { return }
+        switch operation {
+        case .start: servicePhase = .starting
+        case .stop: servicePhase = .stopping
+        case .restart: servicePhase = .restarting
+        }
+        serviceError = nil
+        let path = yabaiPath
+        let plist = servicePlistURL
+        let label = serviceLabel
+        let uid = userID
+        serviceTask = Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Self.performServiceOperation(operation, path: path, plist: plist, label: label, uid: uid)
+            }.value
+
+            guard let self else { return }
+            if result.success {
+                self.refresh()
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                self.refresh()
+                try? await Task.sleep(nanoseconds: 1_100_000_000)
+                if operation == .stop {
+                    self.isRunning = false
+                    self.servicePhase = .stopped
+                    self.windows = []
+                    self.spaces = []
+                    self.displays = []
+                } else if !self.isRunning {
+                    self.servicePhase = .unavailable
+                    self.serviceError = "The service did not become ready. Check Accessibility permission and try again."
+                }
+            } else {
+                self.servicePhase = .unavailable
+                self.serviceError = result.output.isEmpty ? "The service could not be started." : result.output
+                self.refresh()
+            }
+            self.serviceTask = nil
+        }
+    }
+
+    private nonisolated static func performServiceOperation(_ operation: ServiceOperation, path: String, plist: URL, label: String, uid: String) -> CommandResult {
+        guard !path.isEmpty else { return CommandResult(success: false, output: "The bundled runtime is missing from this app.") }
+        switch operation {
+        case .stop:
+            let result = executeSystem("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+            try? FileManager.default.removeItem(at: plist)
+            if result.success || result.output.localizedCaseInsensitiveContains("could not find service") {
+                return CommandResult(success: true, output: result.output)
+            }
+            return result
+        case .start, .restart:
+            _ = executeSystem("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+            try? FileManager.default.removeItem(at: plist)
+            do {
+                try FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let logPrefix = "/tmp/yabui_runtime_\(uid)"
+                let payload: [String: Any] = [
+                    "Label": label,
+                    "ProgramArguments": [path],
+                    "RunAtLoad": true,
+                    "KeepAlive": false,
+                    "ThrottleInterval": 5,
+                    "ProcessType": "Interactive",
+                    "EnvironmentVariables": [
+                        "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+                    ],
+                    "StandardOutPath": "\(logPrefix).out.log",
+                    "StandardErrorPath": "\(logPrefix).err.log"
+                ]
+                let data = try PropertyListSerialization.data(fromPropertyList: payload, format: .xml, options: 0)
+                try data.write(to: plist, options: .atomic)
+            } catch {
+                return CommandResult(success: false, output: "Could not prepare the yabUI service: \(error.localizedDescription)")
+            }
+            let bootstrap = executeSystem("/bin/launchctl", ["bootstrap", "gui/\(uid)", plist.path])
+            guard bootstrap.success else { return bootstrap }
+            return executeSystem("/bin/launchctl", ["kickstart", "-k", "gui/\(uid)/\(label)"])
+        }
+    }
+
+    private nonisolated static func executeSystem(_ executable: String, _ arguments: [String]) -> CommandResult {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            return CommandResult(success: process.terminationStatus == 0, output: output.trimmingCharacters(in: .whitespacesAndNewlines))
+        } catch {
+            return CommandResult(success: false, output: error.localizedDescription)
+        }
+    }
+
+    private nonisolated static func readSnapshot(path: String) -> RuntimeSnapshot {
+        guard !path.isEmpty else {
+            return RuntimeSnapshot(runtimeAvailable: false, version: "", isRunning: false, windows: [], spaces: [], displays: [], error: "The bundled runtime is missing from this app.")
+        }
+        let versionResult = execute(path, ["--version"])
+        let version = versionResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard versionResult.success else {
+            return RuntimeSnapshot(runtimeAvailable: false, version: version, isRunning: false, windows: [], spaces: [], displays: [], error: cleanServiceMessage(version))
+        }
+        let windowsResult = execute(path, ["-m", "query", "--windows"])
+        guard windowsResult.success else {
+            return RuntimeSnapshot(runtimeAvailable: true, version: version, isRunning: false, windows: [], spaces: [], displays: [], error: cleanServiceMessage(windowsResult.output))
+        }
+        let spacesResult = execute(path, ["-m", "query", "--spaces"])
+        let displaysResult = execute(path, ["-m", "query", "--displays"])
+        let decoder = JSONDecoder()
+        do {
+            let windows = try decoder.decode([YabaiWindow].self, from: Data(windowsResult.output.utf8))
+            let spaces = try decoder.decode([YabaiSpace].self, from: Data(spacesResult.output.utf8))
+            let displays = try decoder.decode([YabaiDisplay].self, from: Data(displaysResult.output.utf8))
+            return RuntimeSnapshot(runtimeAvailable: true, version: version, isRunning: true, windows: windows, spaces: spaces, displays: displays, error: nil)
+        } catch {
+            return RuntimeSnapshot(runtimeAvailable: true, version: version, isRunning: true, windows: [], spaces: [], displays: [], error: "Yabai returned data that yabUI could not read yet.")
+        }
+    }
+
+    private nonisolated static func execute(_ path: String, _ arguments: [String]) -> CommandResult {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            return CommandResult(success: process.terminationStatus == 0, output: output)
+        } catch {
+            return CommandResult(success: false, output: error.localizedDescription)
+        }
+    }
+
+    private nonisolated static func cleanServiceMessage(_ message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "The service is not responding yet." : trimmed
+    }
+
+    private func apply(_ snapshot: RuntimeSnapshot) {
+        refreshTask = nil
+        isRefreshing = false
+        version = snapshot.version
+        if snapshot.isRunning {
+            isRunning = true
+            servicePhase = .running
+            serviceError = nil
+            windows = snapshot.windows
+            spaces = snapshot.spaces
+            displays = snapshot.displays
+            dataError = snapshot.error
+        } else {
+            isRunning = false
+            windows = []
+            spaces = []
+            displays = []
+            dataError = nil
+            if !snapshot.runtimeAvailable {
+                servicePhase = .unavailable
+                serviceError = snapshot.error
+            } else if !servicePhase.isTransitioning {
+                let accessFailure = snapshot.error?.localizedCaseInsensitiveContains("accessibility") == true
+                servicePhase = accessFailure ? .unavailable : .stopped
+                serviceError = accessFailure ? snapshot.error : nil
+            }
+        }
+    }
     func focusWindow(_ id: Int) { _ = command(["-m", "window", "--focus", "\(id)"]); refresh() }
     func focusSpace(_ index: Int) { _ = command(["-m", "space", "--focus", "\(index)"]); refresh() }
     func focusDisplay(_ index: Int) { _ = command(["-m", "display", "\(index)", "--focus"]); refresh() }
