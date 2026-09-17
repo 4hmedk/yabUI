@@ -15,9 +15,10 @@ struct YabUIApp: App {
         .defaultSize(width: 900, height: 620)
         .windowResizability(.contentSize)
         MenuBarExtra("yabUI", systemImage: "rectangle.3.group.fill") {
-            StatusMenuView()
+            StatusSurfaceView()
                 .environmentObject(model)
         }
+        .menuBarExtraStyle(.window)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About yabUI") { NSApp.orderFrontStandardAboutPanel(nil) }
@@ -154,43 +155,258 @@ struct HorizontalTabButton: View {
     }
 }
 
-struct StatusMenuView: View {
+struct StatusSurfaceView: View {
     @EnvironmentObject private var model: YabaiModel
+    @StateObject private var dropCoordinator = WorkspaceDropCoordinator()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(model.isRunning ? "Yabai is running" : "Yabai is stopped", systemImage: model.isRunning ? "checkmark.circle.fill" : "pause.circle.fill")
-                .foregroundStyle(model.isRunning ? .green : .secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(model.isRunning ? Color.green.opacity(0.18) : Color.white.opacity(0.10))
+                    Image(systemName: model.isRunning ? "pause.fill" : "play.fill")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(model.isRunning ? .green : .primary)
+                }
+                .frame(width: 42, height: 42)
+                .overlay(Circle().strokeBorder(model.isRunning ? Color.green.opacity(0.45) : Color.white.opacity(0.16)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("yabUI")
+                        .font(.headline.weight(.bold))
+                    Text(model.isRunning ? "Yabai is running" : "Yabai is stopped")
+                        .font(.caption)
+                        .foregroundStyle(model.isRunning ? .green : .secondary)
+                }
+                Spacer()
+                Button { model.refresh() } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh workspace")
+            }
+
             Button {
                 model.toggleService()
             } label: {
-                Label(model.isRunning ? "Stop Yabai" : "Start Yabai", systemImage: model.isRunning ? "stop.fill" : "play.fill")
+                Label(model.isRunning ? "Pause Yabai" : "Start Yabai", systemImage: model.isRunning ? "pause.fill" : "play.fill")
+                    .font(.headline)
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            Button {
-                model.restartService()
-            } label: {
-                Label("Restart Yabai", systemImage: "arrow.clockwise")
-                    .frame(maxWidth: .infinity)
+
+            HStack(spacing: 8) {
+                Button { model.restartService() } label: {
+                    Label("Restart", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!model.isRunning)
+                Button {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.windows.first(where: { $0.title == "yabUI" })?.makeKeyAndOrderFront(nil)
+                } label: {
+                    Label("Open app", systemImage: "macwindow")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
-            .disabled(!model.isRunning)
+
             Divider()
-            Button("Rebalance space") { model.spaceAction("--balance") }
-            Button("Toggle float / tile") { model.windowAction("--toggle float") }
-            Button("Toggle zoom") { model.windowAction("--toggle zoom-fullscreen") }
-            Button("Rotate layout 90°") { model.spaceAction("--rotate 90") }
-            Button("Move window to next space") { model.windowAction("--space next") }
-            Divider()
-            Button("Refresh state") { model.refresh() }
-            Button("Open yabUI") {
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first?.makeKeyAndOrderFront(nil)
+            HStack {
+                Text("Live workspace")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("Drag tiles to move or split")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            StatusSurfaceMapView()
+                .environmentObject(dropCoordinator)
+
+            HStack(spacing: 8) {
+                StatusQuickAction(title: "Balance", icon: "circle.lefthalf.filled") { model.spaceAction("--balance") }
+                StatusQuickAction(title: "Float", icon: "rectangle.on.rectangle") { model.windowAction("--toggle float") }
+                StatusQuickAction(title: "Zoom", icon: "arrow.up.left.and.arrow.down.right") { model.windowAction("--toggle zoom-fullscreen") }
+                StatusQuickAction(title: "Rotate", icon: "rotate.right") { model.spaceAction("--rotate 90") }
+            }
+
+            if !model.logs.isEmpty, let log = model.logs.first {
+                HStack(spacing: 6) {
+                    Image(systemName: log.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(log.success ? .green : .red)
+                    Text(log.command)
+                        .font(.system(size: 10, design: .monospaced))
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
             }
         }
-        .padding(8)
+        .padding(14)
+        .frame(width: 430)
+        .task {
+            model.refresh()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                guard !Task.isCancelled else { break }
+                model.refresh()
+            }
+        }
+        .onPreferenceChange(WorkspaceSpaceFrameKey.self) { frames in
+            dropCoordinator.spaceFrames = frames
+        }
+        .onPreferenceChange(WorkspaceWindowFrameKey.self) { frames in
+            dropCoordinator.windowFrames = frames
+        }
+    }
+}
+
+struct StatusQuickAction: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                Text(title).font(.caption2.weight(.medium))
+            }
+            .frame(maxWidth: .infinity, minHeight: 38)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+}
+
+struct StatusSurfaceMapView: View {
+    @EnvironmentObject private var model: YabaiModel
+    @EnvironmentObject private var dropCoordinator: WorkspaceDropCoordinator
+
+    private var visibleWindows: [YabaiWindow] {
+        model.windows.filter { $0.isRenderable }
+    }
+
+    var body: some View {
+        if visibleWindows.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.dashed")
+                Text(model.isRunning ? "No visible windows" : "Start Yabai to inspect windows")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, minHeight: 118)
+            .background(.black.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+        } else {
+            GeometryReader { geometry in
+                let mapGeometry = UnifiedWindowMapLayout.geometry(windows: visibleWindows, canvasSize: geometry.size)
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.black.opacity(0.16))
+                    UnifiedMapGridBackground()
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                    ForEach(mapGeometry.spaceRects.keys.sorted(), id: \.self) { space in
+                        if let rect = mapGeometry.spaceRects[space] {
+                            StatusMapSpaceDropZone(space: space, rect: rect)
+                        }
+                    }
+
+                    ForEach(visibleWindows) { window in
+                        if let rect = mapGeometry.windowRects[window.id] {
+                            StatusSurfaceWindowTile(window: window, rect: rect)
+                        }
+                    }
+
+                    ForEach(mapGeometry.spaceLabels.keys.sorted(), id: \.self) { space in
+                        if let labelRect = mapGeometry.spaceLabels[space] {
+                            Text("S\(space)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(.black.opacity(0.25), in: Capsule())
+                                .position(x: labelRect.midX, y: labelRect.midY)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .frame(height: 210)
+        }
+    }
+}
+
+struct StatusMapSpaceDropZone: View {
+    @EnvironmentObject private var dropCoordinator: WorkspaceDropCoordinator
+    let space: Int
+    let rect: CGRect
+
+    var body: some View {
+        Color.clear
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: WorkspaceSpaceFrameKey.self, value: [space: proxy.frame(in: .global)])
+            })
+            .overlay {
+                if case .space(let targetID, _) = dropCoordinator.activePreview, targetID == space {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.orange.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+                        .padding(2)
+                        .allowsHitTesting(false)
+                }
+            }
+            .allowsHitTesting(false)
+    }
+}
+
+struct StatusSurfaceWindowTile: View {
+    @EnvironmentObject private var model: YabaiModel
+    @EnvironmentObject private var dropCoordinator: WorkspaceDropCoordinator
+    let window: YabaiWindow
+    let rect: CGRect
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(window.isFocused ? Color.blue.opacity(0.60) : Color.white.opacity(0.17))
+            AppIconView(
+                appName: window.app.isEmpty ? "Unknown app" : window.app,
+                size: min(30, max(14, min(rect.width, rect.height) * 0.38))
+            )
+        }
+        .frame(width: rect.width, height: rect.height)
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(window.isFocused ? Color.blue : Color.white.opacity(0.24), lineWidth: window.isFocused ? 2 : 1)
+            if case .window(let targetID, let intent) = dropCoordinator.activePreview, targetID == window.id {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(intent == .center ? 0.22 : 0.14))
+                    .overlay(Text(intent.label).font(.caption2.weight(.bold)).foregroundStyle(.white))
+                    .allowsHitTesting(false)
+            }
+        }
+        .background(GeometryReader { proxy in
+            Color.clear.preference(key: WorkspaceWindowFrameKey.self, value: [window.id: proxy.frame(in: .global)])
+        })
+        .position(x: rect.midX, y: rect.midY)
+        .contentShape(Rectangle())
+        .onTapGesture { model.focusWindow(window.id) }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                .onChanged { value in
+                    dropCoordinator.updatePreview(for: WorkspaceDragItem(kind: "window", id: window.id), at: value.location, model: model)
+                }
+                .onEnded { value in
+                    dropCoordinator.handleDrop(WorkspaceDragItem(kind: "window", id: window.id), at: value.location, model: model)
+                }
+        )
+        .help("Click to focus · drag to move or split · \(window.app.isEmpty ? "Window" : window.app)")
     }
 }
 
@@ -497,6 +713,7 @@ struct UnifiedOverviewWindowTile: View {
 struct UnifiedWindowMapGeometry {
     let windowRects: [Int: CGRect]
     let spaceLabels: [Int: CGRect]
+    let spaceRects: [Int: CGRect]
 }
 
 enum UnifiedWindowMapLayout {
@@ -514,6 +731,7 @@ enum UnifiedWindowMapLayout {
 
         var windowRects: [Int: CGRect] = [:]
         var spaceLabels: [Int: CGRect] = [:]
+        var spaceRects: [Int: CGRect] = [:]
 
         for (index, group) in groups.enumerated() {
             let column = index % columns
@@ -524,6 +742,7 @@ enum UnifiedWindowMapLayout {
                 width: slotWidth,
                 height: slotHeight
             )
+            spaceRects[group.key] = slot
             let labelHeight: CGFloat = 18
             spaceLabels[group.key] = CGRect(x: slot.minX + 8, y: slot.minY + 5, width: 36, height: 16)
             let content = CGRect(
@@ -534,7 +753,7 @@ enum UnifiedWindowMapLayout {
             )
             windowRects.merge(packedRects(group.value, in: content)) { _, new in new }
         }
-        return UnifiedWindowMapGeometry(windowRects: windowRects, spaceLabels: spaceLabels)
+        return UnifiedWindowMapGeometry(windowRects: windowRects, spaceLabels: spaceLabels, spaceRects: spaceRects)
     }
 
     private static func packedRects(_ windows: [YabaiWindow], in rect: CGRect) -> [Int: CGRect] {
