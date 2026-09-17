@@ -1,114 +1,105 @@
-<!-- Please be careful editing the below HTML, as GitHub is quite finicky with anything that looks like an HTML tag in GitHub Flavored Markdown. -->
+# yabUI
+
 <p align="center">
-  <img width="75%" src="assets/banner/banner.svg" alt="Banner">
-</p>
-<p align="center">
-  <b>Tiling window management for the Mac.</b>
-</p>
-<p align="center">
-  <a href="https://github.com/asmvik/yabai/blob/master/LICENSE.txt">
-    <img src="https://img.shields.io/github/license/asmvik/yabai.svg?color=green" alt="License Badge">
-  </a>
-  <a href="https://github.com/asmvik/yabai/blob/master/doc/yabai.asciidoc">
-    <img src="https://img.shields.io/badge/view-documentation-green.svg" alt="Documentation Badge">
-  </a>
-  <a href="https://github.com/asmvik/yabai/wiki">
-    <img src="https://img.shields.io/badge/view-wiki-green.svg" alt="Wiki Badge">
-  </a>
-  <a href="https://github.com/asmvik/yabai/blob/master/CHANGELOG.md">
-    <img src="https://img.shields.io/badge/view-changelog-green.svg" alt="Changelog Badge">
-  </a>
-  <a href="https://github.com/asmvik/yabai/releases">
-    <img src="https://img.shields.io/github/commits-since/asmvik/yabai/latest.svg?color=green" alt="Version Badge">
-  </a>
+  <img src="yabUI/Resources/yabUI.png" width="128" alt="yabUI icon">
 </p>
 
-## About
+<p align="center"><strong>A visual command center for macOS window management.</strong></p>
 
-<img align="right" width="40%" src="assets/screenshot.png" alt="Screenshot">
+<p align="center">
+  <a href="https://github.com/4hmedk/yabUI/releases/latest">Download</a>
+  · <a href="https://github.com/4hmedk/yabUI/releases">Releases</a>
+  · <a href="yabUI/README.md">Build from source</a>
+</p>
 
-yabai is a window management utility that is designed to work as an extension to the built-in window manager of macOS.
-yabai allows you to control your windows, spaces and displays freely using an intuitive command line interface and optionally set user-defined keyboard shortcuts using [&nearr;&nbsp;skhd][gh-skhd] and other third-party software.
+## Overview
 
-The primary function of yabai is tiling window management; automatically modifying your window layout using a binary space partitioning algorithm to allow you to focus on the content of your windows without distractions.
-Additional features of yabai include focus-follows-mouse, disabling animations for switching spaces, creating spaces past the limit of 16 spaces, and much more.
+yabUI turns spaces, displays, and windows into a compact native macOS surface.
+The main app gives you a live workspace map; the menu-bar surface keeps the
+same essentials available without opening a terminal or a large window.
 
-## yabUI graphical interface
+The interface is designed around the way a desktop actually feels:
 
-This fork includes **yabUI**, a native SwiftUI companion app under
-[`yabUI/`](yabUI/). yabUI gives Yabai a visual workspace map, drag-and-drop
-window and space management, service controls, and a menu-bar status item.
+- a unified window map with proportional, non-overlapping tiles
+- app icons instead of noisy window-name lists
+- click-to-focus behavior for every visible window
+- drag-and-drop movement, swapping, splitting, and rebalancing
+- reorderable spaces across displays
+- a prominent service control in both the app and menu bar
+- a transparent activity log for every command sent by the app
 
-The release app bundles a universal Yabai executable, allowing users to install
-yabUI without separately installing Yabai first. macOS Accessibility permission
-is still required, and advanced scripting-addition features retain the upstream
-Yabai requirements.
+## Install
 
-Build the GUI and its drag-to-Applications installer with:
+Download the latest `yabUI.dmg` from the [release page](https://github.com/4hmedk/yabUI/releases/latest), open it, and drag `yabUI.app` to Applications.
+
+The app includes a universal window-manager runtime, so a separate command-line
+installation is not required. macOS Accessibility permission is required for
+window control. Advanced space operations may require the same scripting
+permissions as the underlying runtime.
+
+## The app surface
+
+### Overview
+
+The Overview tab shows service health, quick layout controls, recent activity,
+open applications, and one unified map of visible windows. A tile keeps the
+window's approximate size and layout relationship while remaining readable at
+compact sizes.
+
+### Workspace
+
+Workspace is the full editing surface. Drag a window onto another tile:
+
+- center — exchange positions
+- left/right/top/bottom — split into that direction
+- another space — move the window there
+
+Spaces can be dragged to reorder them or move them between displays. The app
+rebalances affected spaces after a move so empty gaps do not linger.
+
+### Menu bar
+
+The menu-bar item opens a proper yabUI surface rather than a plain command menu.
+It includes:
+
+- play/pause-style start and stop control
+- restart and refresh
+- a live compact window map
+- click-to-focus tiles
+- drag-to-move and drag-to-split tiles
+- balance, float/tile, zoom, and rotate actions
+
+## Build
+
+Requirements: Apple Silicon macOS 26 or newer, Xcode command-line tools, and a
+working local checkout of this repository.
 
 ```sh
 ./yabUI/scripts/build_app.sh
 ./yabUI/scripts/package_dmg.sh
 ```
 
-## Installation and Configuration
+Build output is written to `yabUI/dist/`. The build script embeds the universal
+runtime found at `/opt/homebrew/bin/yabai`, `/usr/local/bin/yabai`, or
+`/usr/bin/yabai`; set `YABAI_BIN` to override that path.
 
-- The [&nearr;&nbsp;yabai&nbsp;wiki][yabai-wiki] has both brief and detailed installation instructions for multiple installation methods, and also explains how to uninstall yabai completely.
-- Sample configuration files can be found in the [&nearr;&nbsp;examples][yabai-examples] directory. Refer to the [&nearr;&nbsp;documentation][yabai-docs] or the wiki for further information.
-- Keyboard shortcuts can be defined with [&nearr;&nbsp;skhd][gh-skhd] or any other suitable software you may prefer.
+## Repository layout
 
-## Requirements and Caveats
+| Path | Purpose |
+| --- | --- |
+| `yabUI/Sources/yabUI/` | SwiftUI application source |
+| `yabUI/Resources/` | App metadata and icon |
+| `yabUI/scripts/` | App and installer build scripts |
+| `yabUI/RELEASE_NOTES_*.md` | Release-specific notes |
+| `src/`, `examples/`, `doc/` | The bundled window-manager runtime and its reference material |
 
-Please read the below requirements carefully.
-Make sure you fulfil all of them before filing an issue.
+## Project lineage
 
-|Requirement|Note|
-|-:|:-|
-|Operating&nbsp;System&nbsp;Intel x86-64|Big Sur 11.0.0+, Monterey 12.0.0+, Ventura 13.0.0+, Sonoma 14.0.0+, Sequoia 15.0+, and Tahoe 26.0+ is supported.|
-|Operating&nbsp;System&nbsp;Apple Silicon|Monterey 12.0.0+, Ventura 13.0.0+, Sonoma 14.0.0+, Sequoia 15.0+, and Tahoe 26.0+ is supported.|
-|Accessibility&nbsp;API|yabai must be given permission to utilize the Accessibility API and will request access upon launch. The application must be restarted after access has been granted.|
-|Screen Recording|yabai must be given Screen Recording permission if and only if you want to enable window animations, and will request access when necessary. The application must be restarted after access has been granted.|
-|System&nbsp;Preferences&nbsp;(macOS 11.x, 12.x)|In the Mission Control pane, the setting "Displays have separate Spaces" must be enabled.|
-|System&nbsp;Settings&nbsp;(macOS 13.x, 14.x, 15.x, 26.x)|In the Desktop & Dock tab, inside the Mission Control pane, the setting "Displays have separate Spaces" must be enabled.|
+yabUI is distributed in a public fork of the original window-manager project.
+The GUI layer is maintained under `yabUI/`; the root license and runtime source
+remain available for transparency and reproducible builds.
 
-Please also take note of the following caveats.
+## License
 
-|Caveat|Note|
-|-:|:-|
-|System&nbsp;Integrity&nbsp;Protection (Optional)|System Integrity Protection can be (partially) disabled for yabai to inject a scripting addition into Dock.app for controlling windows with functions that require elevated privileges. This enables control of the window server, which is the sole owner of all window connections, and enables additional features of yabai.|
-|Code&nbsp;Signing|When building from source (or installing from HEAD), it is necessary to codesign the binary so it retains its accessibility and automation privileges when updated or rebuilt.|
-|Finder&nbsp;Desktop|Some people disable the Finder Desktop window using an undocumented defaults write command. This breaks focusing of empty spaces and should be avoided when using yabai. To re-activate the Finder Desktop, run: "defaults write com.apple.finder CreateDesktop -bool true".|
-|NSDocument-based&nbsp;Applications|Windows that utilize native macOS tabs such as Terminal and Finder, [do not behave correctly when creating tabs](https://github.com/asmvik/yabai/issues/68). Avoid creating tabs in these applications, consider alternatives that do not use NSDocument's tab system, or make these windows float using rules.|
-|System&nbsp;Preferences&nbsp;(macOS 11.x, 12.x)|In the Mission Control pane, the setting "Automatically rearrange Spaces based on most recent use" should be disabled for commands that rely on the ordering of spaces to work reliably.|
-|System&nbsp;Settings&nbsp;(macOS 13.x, 14.x, 15.x, 26.x)|In the Desktop & Dock tab, inside the Mission Control pane, the setting "Automatically rearrange Spaces based on most recent use" should be disabled for commands that rely on the ordering of spaces to work reliably.|
-|System&nbsp;Settings&nbsp;(macOS 14.x, 15.x, 26.x)|In the Desktop & Dock tab, inside the Desktop & Stage Manager pane, the setting "Show Items On Desktop" should be enabled for display and space focus commands to work reliably in multi-display configurations.|
-|System&nbsp;Settings&nbsp;(macOS 14.x, 15.x, 26.x)|In the Desktop & Dock tab, inside the Desktop & Stage Manager pane, the setting "Click wallpaper to reveal Desktop" should be set to "Only in Stage Manager" for display and space focus commands to work reliably.|
-
-## License and Attribution
-
-yabai is licensed under the [&nearr;&nbsp;MIT&nbsp;License][yabai-license], a short and simple permissive license with conditions only requiring preservation of copyright and license notices.
-Licensed works, modifications, and larger works may be distributed under different terms and without source code.
-
-Thanks to [@fools-mate][gh-fools-mate] for creating a logo and banner for this project and making them available for free.
-
-Thanks to [@dominiklohmann][gh-dominiklohmann] for contributing great documentation, support, and more, for free.
-
-## Disclaimer
-
-Use at your own discretion.
-I take no responsibility if anything should happen to your machine while trying to install, test or otherwise use this software in any form.
-You acknowledge that you understand the potential risk that may come from disabling [&nearr;&nbsp;System&nbsp;Integrity&nbsp;Protection][external-about-sip] on your system, and I make no recommendation as to whether you should or should not disable System Integrity Protection.
-
-<!-- Project internal links -->
-[yabai-license]: LICENSE.txt
-[yabai-examples]: https://github.com/asmvik/yabai/tree/master/examples
-[yabai-wiki]: https://github.com/asmvik/yabai/wiki
-[yabai-docs]: https://github.com/asmvik/yabai/blob/master/doc/yabai.asciidoc
-
-<!-- Links to other GitHub projects/users -->
-[gh-skhd]: https://github.com/asmvik/skhd
-[gh-fools-mate]: https://github.com/fools-mate
-[gh-dominiklohmann]: https://github.com/dominiklohmann
-
-<!-- External links -->
-[external-about-sip]: https://support.apple.com/en-us/HT204899
+yabUI and the retained runtime source are distributed under the terms in
+[`LICENSE.txt`](LICENSE.txt).
