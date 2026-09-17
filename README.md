@@ -31,12 +31,6 @@ yabUI turns spaces, displays, and windows into a compact native macOS surface.
 The main app gives you a live workspace map; the menu-bar surface keeps the
 same essentials available without opening a terminal or a large window.
 
-<p align="center">
-  <img src="docs/images/window-map.png" width="100%" alt="yabUI unified window map">
-</p>
-
-<p align="center"><em>One overview for the windows currently managed on your desktop.</em></p>
-
 The interface is designed around the way a desktop actually feels:
 
 - a unified window map with proportional, non-overlapping tiles
@@ -46,23 +40,6 @@ The interface is designed around the way a desktop actually feels:
 - reorderable spaces across displays
 - a prominent service control in both the app and menu bar
 - a transparent activity log for every command sent by the app
-
-## See it in action
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/workspace.png" alt="yabUI workspace with spaces and window tiles"></td>
-    <td width="50%"><img src="docs/images/yabUI-icon.png" alt="yabUI app icon"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Workspace cards turn spaces into an actionable layout.</sub></td>
-    <td align="center"><sub>The liquid-glass inspired yabUI identity.</sub></td>
-  </tr>
-</table>
-
-The workspace surface is intentionally visual: app icons stand in for window
-names, tiles preserve approximate proportions, and the active space is easy to
-spot at a glance.
 
 ## Install
 
@@ -107,12 +84,10 @@ It includes:
 
 ## Controls at a glance
 
-| Surface | What it is good for |
-| --- | --- |
-| Overview | Service health, a unified window map, app inventory, and recent activity |
-| Workspace | Drag spaces and window tiles, move windows between spaces, swap, split, and rebalance |
-| Menu bar | Start/stop/restart, refresh, quick layout actions, and a compact live map |
-| Activity | A transparent command history with success and failure details |
+- Overview — service health, a unified window map, app inventory, and recent activity
+- Workspace — drag spaces and window tiles, move windows between spaces, swap, split, and rebalance
+- Menu bar — start/stop/restart, refresh, quick layout actions, and a compact live map
+- Activity — a transparent command history with success and failure details
 
 ## Build
 
@@ -130,13 +105,11 @@ runtime found at `/opt/homebrew/bin/yabai`, `/usr/local/bin/yabai`, or
 
 ## Repository layout
 
-| Path | Purpose |
-| --- | --- |
-| `yabUI/Sources/yabUI/` | SwiftUI application source |
-| `yabUI/Resources/` | App metadata and icon |
-| `yabUI/scripts/` | App and installer build scripts |
-| `yabUI/RELEASE_NOTES_*.md` | Release-specific notes |
-| `src/`, `examples/`, `doc/` | The bundled window-manager runtime and its reference material |
+- `yabUI/Sources/yabUI/` — SwiftUI application source
+- `yabUI/Resources/` — app metadata and icon
+- `yabUI/scripts/` — app and installer build scripts
+- `yabUI/RELEASE_NOTES_*.md` — release-specific notes
+- `src/`, `examples/`, `doc/` — bundled runtime source and reference material
 
 ## Open source and reproducible builds
 
