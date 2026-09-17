@@ -1,14 +1,27 @@
 # yabUI
 
 <p align="center">
-  <img src="yabUI/Resources/yabUI.png" width="128" alt="yabUI icon">
+  <img src="docs/images/yabUI-icon.png" width="112" alt="yabUI icon">
 </p>
 
-<p align="center"><strong>A visual command center for macOS window management.</strong></p>
+<h3 align="center">A visual command center for macOS window management.</h3>
 
 <p align="center">
-  <a href="https://github.com/4hmedk/yabUI/releases/latest">Download</a>
-  · <a href="https://github.com/4hmedk/yabUI/releases">Releases</a>
+  See your desktop as a map, move windows with intent, and control the service
+  from one calm native interface.
+</p>
+
+<p align="center">
+  <a href="https://github.com/4hmedk/yabUI/releases/latest"><img src="https://img.shields.io/github/v/release/4hmedk/yabUI?display_name=tag&style=flat-square&color=0a84ff&label=latest%20release" alt="Latest release"></a>
+  <a href="https://github.com/4hmedk/yabUI/actions/workflows/release-yabui.yml"><img src="https://img.shields.io/github/actions/workflow/status/4hmedk/yabUI/release-yabui.yml?style=flat-square&label=release%20build" alt="Release build status"></a>
+  <a href="https://github.com/4hmedk/yabUI/blob/master/LICENSE.txt"><img src="https://img.shields.io/badge/license-BSD--3--Clause-34c759?style=flat-square" alt="BSD-3-Clause license"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%2026%2B-8e8e93?style=flat-square" alt="macOS 26 or newer">
+  <img src="https://img.shields.io/badge/UI-SwiftUI-ff375f?style=flat-square" alt="SwiftUI interface">
+</p>
+
+<p align="center">
+  <a href="https://github.com/4hmedk/yabUI/releases/latest">Download yabUI</a>
+  · <a href="https://github.com/4hmedk/yabUI/releases">View releases</a>
   · <a href="yabUI/README.md">Build from source</a>
 </p>
 
@@ -17,6 +30,12 @@
 yabUI turns spaces, displays, and windows into a compact native macOS surface.
 The main app gives you a live workspace map; the menu-bar surface keeps the
 same essentials available without opening a terminal or a large window.
+
+<p align="center">
+  <img src="docs/images/window-map.png" width="100%" alt="yabUI unified window map">
+</p>
+
+<p align="center"><em>One overview for the windows currently managed on your desktop.</em></p>
 
 The interface is designed around the way a desktop actually feels:
 
@@ -27,6 +46,23 @@ The interface is designed around the way a desktop actually feels:
 - reorderable spaces across displays
 - a prominent service control in both the app and menu bar
 - a transparent activity log for every command sent by the app
+
+## See it in action
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/workspace.png" alt="yabUI workspace with spaces and window tiles"></td>
+    <td width="50%"><img src="docs/images/yabUI-icon.png" alt="yabUI app icon"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Workspace cards turn spaces into an actionable layout.</sub></td>
+    <td align="center"><sub>The liquid-glass inspired yabUI identity.</sub></td>
+  </tr>
+</table>
+
+The workspace surface is intentionally visual: app icons stand in for window
+names, tiles preserve approximate proportions, and the active space is easy to
+spot at a glance.
 
 ## Install
 
@@ -69,6 +105,15 @@ It includes:
 - drag-to-move and drag-to-split tiles
 - balance, float/tile, zoom, and rotate actions
 
+## Controls at a glance
+
+| Surface | What it is good for |
+| --- | --- |
+| Overview | Service health, a unified window map, app inventory, and recent activity |
+| Workspace | Drag spaces and window tiles, move windows between spaces, swap, split, and rebalance |
+| Menu bar | Start/stop/restart, refresh, quick layout actions, and a compact live map |
+| Activity | A transparent command history with success and failure details |
+
 ## Build
 
 Requirements: Apple Silicon macOS 26 or newer, Xcode command-line tools, and a
@@ -93,11 +138,12 @@ runtime found at `/opt/homebrew/bin/yabai`, `/usr/local/bin/yabai`, or
 | `yabUI/RELEASE_NOTES_*.md` | Release-specific notes |
 | `src/`, `examples/`, `doc/` | The bundled window-manager runtime and its reference material |
 
-## Project lineage
+## Open source and reproducible builds
 
-yabUI is distributed in a public fork of the original window-manager project.
-The GUI layer is maintained under `yabUI/`; the root license and runtime source
-remain available for transparency and reproducible builds.
+The app layer and its bundled runtime live in the same repository so releases
+can be inspected and rebuilt from source. The SwiftUI product surface is under
+`yabUI/`, while the runtime implementation and reference material remain in
+the root source tree.
 
 ## License
 

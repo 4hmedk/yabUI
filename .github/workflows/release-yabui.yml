@@ -3,7 +3,7 @@ name: Release yabUI
 on:
   push:
     tags:
-      - 'v*'
+      - 'yabUI-v*'
 
 permissions:
   contents: write
