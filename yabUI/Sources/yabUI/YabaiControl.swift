@@ -370,6 +370,7 @@ struct StatusSurfaceWindowTile: View {
     @EnvironmentObject private var dropCoordinator: WorkspaceDropCoordinator
     let window: YabaiWindow
     let rect: CGRect
+    @State private var didDrag = false
 
     var body: some View {
         ZStack {
@@ -396,17 +397,28 @@ struct StatusSurfaceWindowTile: View {
         })
         .position(x: rect.midX, y: rect.midY)
         .contentShape(Rectangle())
-        .onTapGesture { model.focusWindow(window.id) }
+        .onTapGesture {
+            guard !didDrag else { return }
+            model.focusWindow(window.id)
+        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 8, coordinateSpace: .global)
                 .onChanged { value in
+                    didDrag = true
                     dropCoordinator.updatePreview(for: WorkspaceDragItem(kind: "window", id: window.id), at: value.location, model: model)
                 }
                 .onEnded { value in
                     dropCoordinator.handleDrop(WorkspaceDragItem(kind: "window", id: window.id), at: value.location, model: model)
+                    resetDragGuard()
                 }
         )
         .help("Click to focus · drag to move or split · \(window.app.isEmpty ? "Window" : window.app)")
+    }
+
+    private func resetDragGuard() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            didDrag = false
+        }
     }
 }
 
@@ -911,7 +923,6 @@ struct FloatingWindowStrip: View {
 }
 
 struct WindowTile: View {
-    @EnvironmentObject private var model: YabaiModel
     let window: YabaiWindow
     let bounds: WindowMapBounds
     let canvasSize: CGSize
@@ -926,7 +937,6 @@ struct WindowTile: View {
             .background(window.isFocused ? Color.blue.opacity(0.52) : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(window.isFocused ? Color.blue : Color.white.opacity(0.16), lineWidth: window.isFocused ? 2 : 1))
             .position(x: tileRect.midX, y: tileRect.midY)
-            .onTapGesture { model.focusWindow(window.id) }
             .help("\(window.app.isEmpty ? "Window" : window.app) — \(window.title.isEmpty ? "Untitled" : window.title)")
         }
     }
@@ -1275,6 +1285,7 @@ struct WorkspaceWindowTile: View {
     let bounds: WindowMapBounds
     let canvasSize: CGSize
     @State private var dragOffset = CGSize.zero
+    @State private var didDrag = false
 
     var body: some View {
         WindowTile(window: window, bounds: bounds, canvasSize: canvasSize)
@@ -1293,17 +1304,29 @@ struct WorkspaceWindowTile: View {
                         .allowsHitTesting(false)
                 }
             }
+            .onTapGesture {
+                guard !didDrag else { return }
+                model.focusWindow(window.id)
+            }
             .gesture(
                 DragGesture(minimumDistance: 8, coordinateSpace: .global)
                     .onChanged { value in
+                        didDrag = true
                         dragOffset = value.translation
                         dropCoordinator.updatePreview(for: WorkspaceDragItem(kind: "window", id: window.id), at: value.location, model: model)
                     }
                     .onEnded { value in
                         dropCoordinator.handleDrop(WorkspaceDragItem(kind: "window", id: window.id), at: value.location, model: model)
                         dragOffset = .zero
+                        resetDragGuard()
                     }
             )
+    }
+
+    private func resetDragGuard() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            didDrag = false
+        }
     }
 }
 
