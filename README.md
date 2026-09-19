@@ -51,9 +51,12 @@ window control. Advanced space operations may require the same scripting
 permissions as the underlying runtime.
 
 On first launch, yabUI walks through Accessibility permission and the bundled
-service setup. The installer is ad-hoc signed because this open-source project
-does not ship with a paid Developer ID certificate; if Gatekeeper blocks the
-download, use Open from the app’s context menu once, then complete onboarding.
+service setup. macOS authorizes executables individually, so onboarding reveals
+the bundled “yabUI Runtime” helper and asks you to add it as well as yabUI to
+Privacy & Security → Accessibility. The installer is ad-hoc signed because this
+open-source project does not ship with a paid Developer ID certificate; if
+Gatekeeper blocks the download, use Open from the app’s context menu once, then
+complete onboarding.
 
 ## The app surface
 

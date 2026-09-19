@@ -7,7 +7,8 @@ REPO="${PROJECT:h}"
 DIST="$PROJECT/dist"
 OUT="$DIST/yabUI.app"
 rm -rf "$OUT"
-mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
+mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources" \
+  "$OUT/Contents/Resources/yabUI Runtime.app/Contents/MacOS"
 
 SWIFTC="${SWIFTC:-/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc}"
 SDK="${SDK:-/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk}"
@@ -26,6 +27,7 @@ rm -f "$DIST/yabUI-arm64" "$DIST/yabUI-x86_64"
 
 cp "$PROJECT/Resources/Info.plist" "$OUT/Contents/Info.plist"
 cp "$PROJECT/Resources/yabUI.png" "$OUT/Contents/Resources/yabUI.png"
+cp "$PROJECT/Resources/RuntimeInfo.plist" "$OUT/Contents/Resources/yabUI Runtime.app/Contents/Info.plist"
 
 # Bundle Yabai so the release app can operate without a separate installation.
 # A system binary remains a development fallback when explicitly building on a
@@ -48,14 +50,14 @@ if [[ -z "$YABAI_BIN" ]]; then
   YABAI_BIN="$REPO/bin/yabai"
 fi
 if [[ -n "$YABAI_BIN" && -x "$YABAI_BIN" ]]; then
-  cp "$YABAI_BIN" "$OUT/Contents/Resources/yabai"
-  chmod +x "$OUT/Contents/Resources/yabai"
+  cp "$YABAI_BIN" "$OUT/Contents/Resources/yabUI Runtime.app/Contents/MacOS/yabai"
+  chmod +x "$OUT/Contents/Resources/yabUI Runtime.app/Contents/MacOS/yabai"
 else
   echo "error: no bundled runtime was produced" >&2
   exit 1
 fi
 
-codesign --force --sign - "$OUT/Contents/Resources/yabai" >/dev/null
+codesign --force --sign - "$OUT/Contents/Resources/yabUI Runtime.app" >/dev/null
 codesign --force --deep --options runtime --sign - "$OUT" >/dev/null
 codesign --verify --deep --strict "$OUT"
 echo "$OUT"

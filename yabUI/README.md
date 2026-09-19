@@ -24,7 +24,10 @@ terminal installation. Set `YABAI_BIN` when building with a custom runtime.
 
 ## Runtime permissions
 
-macOS Accessibility permission is required for window actions. Space operations
-that depend on elevated scripting support may require additional system setup.
+macOS Accessibility permission is required for window actions. Because the
+window manager runs as a bundled `yabUI Runtime.app` helper, macOS may require
+both yabUI and that helper to be enabled in Privacy & Security → Accessibility.
+Space operations that depend on elevated scripting support may require
+additional system setup.
 The app reports command failures in its Activity tab so configuration issues
 remain visible instead of looking like silent UI failures.

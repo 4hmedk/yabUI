@@ -254,15 +254,27 @@ struct OnboardingView: View {
                     OnboardingPage(
                         icon: "lock.shield",
                         title: "Allow window control",
-                        message: "macOS Accessibility permission lets the bundled runtime read and arrange windows. yabUI will remain calm and usable until permission is granted."
+                        message: "The window manager runs as a small bundled helper inside yabUI. macOS requires that helper to be approved in Accessibility before it can read or arrange windows."
                     ) {
-                        Button("Open Accessibility settings") {
-                            model.openAccessibilitySettings()
+                        HStack(spacing: 10) {
+                            Button("Reveal bundled runtime") {
+                                model.revealBundledRuntime()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Open Accessibility settings") {
+                                model.openAccessibilitySettings()
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.borderedProminent)
-                        Text("Enable yabUI in System Settings → Privacy & Security → Accessibility, then return here.")
+
+                        Text("Add the revealed “yabUI Runtime” helper to System Settings → Privacy & Security → Accessibility. Approving only yabUI or an older yabai entry is not sufficient because macOS checks each executable separately.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        Text(model.runtimeStatusText)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(model.runtimeIsUsable ? .green : .orange)
                     }
                 case 2:
                     OnboardingPage(
@@ -428,6 +440,40 @@ struct StatusSurfaceView: View {
                 StatusQuickAction(title: "Rotate", icon: "rotate.right") { model.spaceAction("--rotate 90") }
             }
 
+            Divider()
+            HStack {
+                Text("Space controls")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let currentSpace = model.currentSpaceIndex {
+                    Text("Space \(currentSpace)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: 8) {
+                StatusQuickAction(title: "New space", icon: "plus.rectangle.on.rectangle") {
+                    model.createSpace()
+                }
+                StatusQuickAction(title: "Close space", icon: "minus.rectangle") {
+                    if let currentSpace = model.currentSpaceIndex { model.closeSpace(currentSpace) }
+                }
+                StatusQuickAction(title: "Tile prev", icon: "arrow.left.to.line") {
+                    model.moveFocusedWindowToAdjacentSpace(.previous)
+                }
+                StatusQuickAction(title: "Tile next", icon: "arrow.right.to.line") {
+                    model.moveFocusedWindowToAdjacentSpace(.next)
+                }
+            }
+            HStack(spacing: 8) {
+                StatusQuickAction(title: "Min all", icon: "minus.square") {
+                    model.minimizeAllWindows(in: model.currentSpaceIndex)
+                }
+                StatusQuickAction(title: "Max all", icon: "arrow.up.left.and.arrow.down.right.square") {
+                    model.maximizeAllWindows(in: model.currentSpaceIndex)
+                }
+            }
+
             if !model.logs.isEmpty, let log = model.logs.first {
                 HStack(spacing: 6) {
                     Image(systemName: log.success ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -493,6 +539,7 @@ struct StatusSurfaceMapView: View {
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(Color.black.opacity(0.16))
+                        .allowsHitTesting(false)
                     UnifiedMapGridBackground()
                         .clipShape(RoundedRectangle(cornerRadius: 12))
 
@@ -529,6 +576,7 @@ struct StatusSurfaceMapView: View {
 }
 
 struct StatusMapSpaceDropZone: View {
+    @EnvironmentObject private var model: YabaiModel
     @EnvironmentObject private var dropCoordinator: WorkspaceDropCoordinator
     let space: Int
     let rect: CGRect
@@ -548,7 +596,12 @@ struct StatusMapSpaceDropZone: View {
                         .allowsHitTesting(false)
                 }
             }
-            .allowsHitTesting(false)
+            // Empty space areas are controls too. Keep them below window
+            // tiles so a tile click wins, while the surrounding space
+            // background focuses that space deterministically.
+            .contentShape(Rectangle())
+            .onTapGesture { model.focusSpace(space) }
+            .zIndex(1)
     }
 }
 
@@ -584,6 +637,7 @@ struct StatusSurfaceWindowTile: View {
         })
         .position(x: rect.midX, y: rect.midY)
         .contentShape(Rectangle())
+        .zIndex(10)
         .onTapGesture {
             guard !didDrag else { return }
             model.focusWindow(window.id)
@@ -600,6 +654,18 @@ struct StatusSurfaceWindowTile: View {
                 }
         )
         .help("Click to focus · drag to move or split · \(window.app.isEmpty ? "Window" : window.app)")
+        .contextMenu {
+            Text(window.app.isEmpty ? "Window" : window.app)
+            Divider()
+            Button("Move to previous space") {
+                model.moveWindowToAdjacentSpace(window.id, direction: .previous)
+            }
+            .disabled(model.adjacentSpaceIndex(from: window.space, direction: .previous) == nil)
+            Button("Move to next space") {
+                model.moveWindowToAdjacentSpace(window.id, direction: .next)
+            }
+            .disabled(model.adjacentSpaceIndex(from: window.space, direction: .next) == nil)
+        }
     }
 
     private func resetDragGuard() {
@@ -1253,6 +1319,13 @@ struct WorkspaceDisplayBoard: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button {
+                    model.createSpace(onDisplay: displayIndex)
+                } label: {
+                    Label("New space", systemImage: "plus.rectangle.on.rectangle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 Button("Focus") { model.focusDisplay(displayIndex) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -1427,6 +1500,34 @@ struct WorkspaceSpaceTile: View {
                     .help("Rebalance space")
                 Button { model.spaceCommand(space.index, ["--rotate", "90"]) } label: { Image(systemName: "rotate.right") }
                     .help("Rotate layout")
+                Menu {
+                    Button("New space on Display \(displayIndex)") {
+                        model.createSpace(onDisplay: displayIndex)
+                    }
+                    Divider()
+                    Button("Move focused tile to previous space") {
+                        model.moveFocusedWindowToAdjacentSpace(.previous)
+                    }
+                    .disabled(model.adjacentSpaceIndex(from: space.index, direction: .previous) == nil)
+                    Button("Move focused tile to next space") {
+                        model.moveFocusedWindowToAdjacentSpace(.next)
+                    }
+                    .disabled(model.adjacentSpaceIndex(from: space.index, direction: .next) == nil)
+                    Divider()
+                    Button("Minimize all windows") {
+                        model.minimizeAllWindows(in: space.index)
+                    }
+                    Button("Maximize all windows") {
+                        model.maximizeAllWindows(in: space.index)
+                    }
+                    Divider()
+                    Button("Close Space \(space.index)", role: .destructive) {
+                        model.closeSpace(space.index)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .help("Space actions")
                 Spacer()
                 Button("Focus") { model.focusSpace(space.index) }
                     .buttonStyle(.bordered)
@@ -1509,6 +1610,18 @@ struct WorkspaceWindowTile: View {
                         resetDragGuard()
                     }
             )
+            .contextMenu {
+                Text(window.app.isEmpty ? "Window" : window.app)
+                Divider()
+                Button("Move to previous space") {
+                    model.moveWindowToAdjacentSpace(window.id, direction: .previous)
+                }
+                .disabled(model.adjacentSpaceIndex(from: window.space, direction: .previous) == nil)
+                Button("Move to next space") {
+                    model.moveWindowToAdjacentSpace(window.id, direction: .next)
+                }
+                .disabled(model.adjacentSpaceIndex(from: window.space, direction: .next) == nil)
+            }
     }
 
     private func resetDragGuard() {
@@ -1642,6 +1755,14 @@ struct WorkspaceWindowRow: View {
                     ForEach(model.spaces.filter { $0.index != window.space }.sorted { $0.index < $1.index }) { target in
                         Button("Move to Space \(target.index)") { model.moveWindow(window.id, toSpace: target.index) }
                     }
+                    Button("Move to previous space") {
+                        model.moveWindowToAdjacentSpace(window.id, direction: .previous)
+                    }
+                    .disabled(model.adjacentSpaceIndex(from: window.space, direction: .previous) == nil)
+                    Button("Move to next space") {
+                        model.moveWindowToAdjacentSpace(window.id, direction: .next)
+                    }
+                    .disabled(model.adjacentSpaceIndex(from: window.space, direction: .next) == nil)
                     ForEach(model.displays.filter { $0.index != (model.spaces.first(where: { $0.index == window.space })?.display ?? 0) }.sorted { $0.index < $1.index }) { target in
                         Button("Move to Display \(target.index)") { model.moveWindow(window.id, toDisplay: target.index) }
                     }
@@ -1755,26 +1876,96 @@ struct SettingsView: View {
         Form {
             PageHeader(title: "Settings", subtitle: "Tune the Yabai behavior you use most.")
             Section("Global behavior") {
-                Toggle("Mouse follows focus", isOn: Binding(get: { model.settings.mouseFollowsFocus }, set: { model.setConfig("mouse_follows_focus", $0 ? "on" : "off"); model.settings.mouseFollowsFocus = $0 }))
-                Picker("Focus follows mouse", selection: Binding(get: { model.settings.focusFollowsMouse }, set: { model.setConfig("focus_follows_mouse", $0); model.settings.focusFollowsMouse = $0 })) {
+                Toggle("Mouse follows focus", isOn: boolBinding("mouse_follows_focus", get: { model.settings.mouseFollowsFocus }))
+                Picker("Focus follows mouse", selection: stringBinding("focus_follows_mouse", get: { model.settings.focusFollowsMouse })) {
                     Text("Off").tag("off")
                     Text("Autofocus").tag("autofocus")
                     Text("Autorise").tag("autoraise")
                 }
-                Toggle("Window opacity", isOn: Binding(get: { model.settings.windowOpacity }, set: { model.setConfig("window_opacity", $0 ? "on" : "off"); model.settings.windowOpacity = $0 }))
-                Toggle("Keep zoom state", isOn: Binding(get: { model.settings.zoomPersist }, set: { model.setConfig("window_zoom_persist", $0 ? "on" : "off"); model.settings.zoomPersist = $0 }))
+                Toggle("Window opacity", isOn: boolBinding("window_opacity", get: { model.settings.windowOpacity }))
+                Toggle("Keep zoom state", isOn: boolBinding("window_zoom_persist", get: { model.settings.zoomPersist }))
+                Toggle("Window shadow", isOn: boolBinding("window_shadow", get: { model.settings.windowShadow }))
+                Toggle("Auto-balance spaces", isOn: boolBinding("auto_balance", get: { model.settings.autoBalance }))
+                TextField("External bar", text: stringBinding("external_bar", get: { model.settings.externalBar }))
+                TextField("Menu bar opacity", text: stringBinding("menubar_opacity", get: { model.settings.menubarOpacity }))
             }
-            Section("Current space") {
-                Picker("Layout", selection: Binding(get: { model.settings.layout }, set: { model.setSpaceConfig("layout", $0); model.settings.layout = $0 })) {
+            Section("Layout and geometry") {
+                Picker("Layout", selection: spaceStringBinding("layout", get: { model.settings.layout })) {
                     Text("BSP").tag("bsp")
                     Text("Stack").tag("stack")
                     Text("Float").tag("float")
                 }
-                Picker("Split type", selection: Binding(get: { model.settings.splitType }, set: { model.setSpaceConfig("split_type", $0); model.settings.splitType = $0 })) {
+                Picker("Split type", selection: spaceStringBinding("split_type", get: { model.settings.splitType })) {
                     Text("Auto").tag("auto")
                     Text("Vertical").tag("vertical")
                     Text("Horizontal").tag("horizontal")
                 }
+                TextField("Split ratio", text: stringBinding("split_ratio", get: { model.settings.splitRatio }))
+                Stepper("Window gap: \(model.settings.windowGap)", value: intBinding("window_gap", get: { model.settings.windowGap }), in: 0...100)
+                Stepper("Top padding: \(model.settings.topPadding)", value: intBinding("top_padding", get: { model.settings.topPadding }), in: 0...200)
+                Stepper("Bottom padding: \(model.settings.bottomPadding)", value: intBinding("bottom_padding", get: { model.settings.bottomPadding }), in: 0...200)
+                Stepper("Left padding: \(model.settings.leftPadding)", value: intBinding("left_padding", get: { model.settings.leftPadding }), in: 0...200)
+                Stepper("Right padding: \(model.settings.rightPadding)", value: intBinding("right_padding", get: { model.settings.rightPadding }), in: 0...200)
+                TextField("Insert feedback color", text: stringBinding("insert_feedback_color", get: { model.settings.insertFeedbackColor }))
+            }
+            Section("Placement and interaction") {
+                TextField("Display arrangement", text: stringBinding("display_arrangement_order", get: { model.settings.displayArrangementOrder }))
+                TextField("Window origin display", text: stringBinding("window_origin_display", get: { model.settings.windowOriginDisplay }))
+                Picker("Window placement", selection: stringBinding("window_placement", get: { model.settings.windowPlacement })) {
+                    Text("First child").tag("first_child")
+                    Text("Second child").tag("second_child")
+                }
+                Picker("Insertion point", selection: stringBinding("window_insertion_point", get: { model.settings.windowInsertionPoint })) {
+                    Text("Focused").tag("focused")
+                    Text("First child").tag("first_child")
+                    Text("Last child").tag("last_child")
+                }
+                Picker("Mouse modifier", selection: stringBinding("mouse_modifier", get: { model.settings.mouseModifier })) {
+                    Text("Fn").tag("fn")
+                    Text("Option").tag("alt")
+                    Text("Shift").tag("shift")
+                    Text("Command").tag("cmd")
+                    Text("Control").tag("ctrl")
+                }
+                Picker("Mouse action 1", selection: stringBinding("mouse_action1", get: { model.settings.mouseAction1 })) {
+                    Text("Move").tag("move")
+                    Text("Resize").tag("resize")
+                }
+                Picker("Mouse action 2", selection: stringBinding("mouse_action2", get: { model.settings.mouseAction2 })) {
+                    Text("Resize").tag("resize")
+                    Text("Move").tag("move")
+                }
+                Picker("Drop action", selection: stringBinding("mouse_drop_action", get: { model.settings.mouseDropAction })) {
+                    Text("Swap").tag("swap")
+                    Text("Stack").tag("stack")
+                    Text("Float").tag("float")
+                }
+            }
+            Section("Animation and appearance") {
+                Toggle("Skip focus animation", isOn: boolBinding("skip_window_focus_animation", get: { model.settings.skipWindowFocusAnimation }))
+                TextField("Window animation duration", text: stringBinding("window_animation_duration", get: { model.settings.windowAnimationDuration }))
+                TextField("Window animation easing", text: stringBinding("window_animation_easing", get: { model.settings.windowAnimationEasing }))
+                TextField("Opacity transition duration", text: stringBinding("window_opacity_duration", get: { model.settings.windowOpacityDuration }))
+                TextField("Active window opacity", text: stringBinding("active_window_opacity", get: { model.settings.activeWindowOpacity }))
+                TextField("Normal window opacity", text: stringBinding("normal_window_opacity", get: { model.settings.normalWindowOpacity }))
+            }
+            Section("Keyboard shortcuts") {
+                Text("yabUI can install a managed shortcut block in ~/.config/skhd/skhdrc. Existing user bindings are preserved.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    model.installKeyboardShortcuts()
+                } label: {
+                    Label("Install / update keyboard shortcuts", systemImage: "keyboard")
+                }
+                if let shortcutStatus = model.shortcutStatus {
+                    Text(shortcutStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Focus: ⌥H/J/K/L · Move: ⇧⌥H/J/K/L · Warp: ⇧⌘H/J/K/L · Spaces: ⌘⌥1–9")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
             }
             Section("Space reordering") {
                 Label("Dragging spaces uses Yabai's scripting addition. It must be loaded for macOS Mission Control spaces to move or swap.", systemImage: "rectangle.3.group")
@@ -1836,13 +2027,30 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Button("Save Yabai configuration") { model.persistYabaiConfiguration() }
                 Button("Refresh settings") { model.refreshSettings() }
-                Text("Settings are written through Yabai's live message interface. Persist them in your yabairc if you want them to survive a restart.")
+                Text("Changes are applied live and saved to ~/.config/yabai/yabairc. The bundled service launches with this configuration on the next start or restart.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding(20)
+    }
+
+    private func stringBinding(_ key: String, get: @escaping () -> String) -> Binding<String> {
+        Binding(get: get, set: { model.setConfig(key, $0) })
+    }
+
+    private func spaceStringBinding(_ key: String, get: @escaping () -> String) -> Binding<String> {
+        Binding(get: get, set: { model.setSpaceConfig(key, $0) })
+    }
+
+    private func boolBinding(_ key: String, get: @escaping () -> Bool) -> Binding<Bool> {
+        Binding(get: get, set: { model.setConfig(key, $0 ? "on" : "off") })
+    }
+
+    private func intBinding(_ key: String, get: @escaping () -> Int) -> Binding<Int> {
+        Binding(get: get, set: { model.setConfig(key, "\($0)") })
     }
 }
 
@@ -2026,13 +2234,50 @@ enum WorkspaceDropPreview: Equatable {
     case space(targetID: Int, after: Bool)
 }
 
+enum AdjacentSpaceDirection {
+    case previous
+    case next
+
+    var title: String {
+        switch self {
+        case .previous: return "previous"
+        case .next: return "next"
+        }
+    }
+}
+
 struct YabaiSettings {
+    var externalBar = "off:40:0"
+    var menubarOpacity = "1.0"
     var mouseFollowsFocus = false
     var focusFollowsMouse = "off"
+    var displayArrangementOrder = "default"
+    var windowOriginDisplay = "default"
+    var windowPlacement = "second_child"
+    var windowInsertionPoint = "focused"
+    var zoomPersist = true
+    var windowShadow = true
+    var skipWindowFocusAnimation = false
+    var windowAnimationDuration = "0.0"
+    var windowAnimationEasing = "ease_out_circ"
+    var windowOpacityDuration = "0.0"
+    var activeWindowOpacity = "1.0"
+    var normalWindowOpacity = "0.90"
     var windowOpacity = false
-    var zoomPersist = false
+    var insertFeedbackColor = "0xffd75f5f"
+    var splitRatio = "0.50"
+    var autoBalance = false
+    var topPadding = 12
+    var bottomPadding = 12
+    var leftPadding = 12
+    var rightPadding = 12
+    var windowGap = 6
     var layout = "bsp"
     var splitType = "auto"
+    var mouseModifier = "fn"
+    var mouseAction1 = "move"
+    var mouseAction2 = "resize"
+    var mouseDropAction = "swap"
 }
 
 struct YabaiWindow: Identifiable, Decodable {
@@ -2105,7 +2350,7 @@ struct YabaiSpace: Identifiable, Decodable {
     let isFocused: Bool
     var id: Int { index }
     var windowCount: Int { windows.count }
-    enum CodingKeys: String, CodingKey { case index, label, display, windows, layout, hasFocus = "has-focus", focused }
+    enum CodingKeys: String, CodingKey { case index, label, display, windows, layout, type, hasFocus = "has-focus", focused }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -2113,7 +2358,11 @@ struct YabaiSpace: Identifiable, Decodable {
         label = try values.decodeIfPresent(String.self, forKey: .label) ?? ""
         display = try values.decodeIfPresent(Int.self, forKey: .display) ?? 0
         windows = try values.decodeIfPresent([Int].self, forKey: .windows) ?? []
-        layout = try values.decodeIfPresent(String.self, forKey: .layout) ?? "bsp"
+        // `query --spaces` calls this field `type` (bsp/stack/float). Keep
+        // accepting `layout` for compatibility with older snapshots.
+        layout = try values.decodeIfPresent(String.self, forKey: .layout)
+            ?? values.decodeIfPresent(String.self, forKey: .type)
+            ?? "bsp"
         isFocused = try values.decodeIfPresent(Bool.self, forKey: .hasFocus) ?? values.decodeIfPresent(Bool.self, forKey: .focused) ?? false
     }
 }
@@ -2198,6 +2447,7 @@ final class YabaiModel: ObservableObject {
     @Published var spaceReorderUnavailable = false
     @Published var showOnboarding: Bool
     @Published var updateStatus: UpdateStatus = .idle
+    @Published var shortcutStatus: String?
 
     private let decoder = JSONDecoder()
     private let systemYabaiCandidates = ["/opt/homebrew/bin/yabai", "/usr/local/bin/yabai", "/usr/bin/yabai"]
@@ -2206,15 +2456,30 @@ final class YabaiModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var serviceTask: Task<Void, Never>?
+    private let preferredLayoutKey = "yabUI.preferredLayout"
+    private let preferredSplitTypeKey = "yabUI.preferredSplitType"
+    private let managedConfigStart = "# BEGIN yabUI managed settings"
+    private let managedConfigEnd = "# END yabUI managed settings"
+    private let managedShortcutStart = "# BEGIN yabUI managed shortcuts"
+    private let managedShortcutEnd = "# END yabUI managed shortcuts"
 
     init() {
         currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"
+        settings = Self.readSettings(from: Self.yabaiConfigFileURL)
         showOnboarding = !UserDefaults.standard.bool(forKey: "yabUI.onboarding.complete")
     }
 
     private var yabaiCandidates: [String] {
-        let bundled = Bundle.main.path(forResource: "yabai", ofType: nil)
-        return ([bundled].compactMap { $0 } + systemYabaiCandidates)
+        ([bundledYabaiPath].compactMap { $0 } + systemYabaiCandidates)
+    }
+    private var bundledRuntimeAppPath: String? {
+        Bundle.main.path(forResource: "yabUI Runtime", ofType: "app")
+    }
+    private var bundledYabaiPath: String? {
+        if let appPath = bundledRuntimeAppPath {
+            return URL(fileURLWithPath: appPath).appendingPathComponent("Contents/MacOS/yabai").path
+        }
+        return Bundle.main.path(forResource: "yabai", ofType: nil)
     }
     private var yabaiPath: String { yabaiCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "" }
     private var servicePlistURL: URL {
@@ -2222,8 +2487,31 @@ final class YabaiModel: ObservableObject {
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
             .appendingPathComponent("\(serviceLabel).plist")
     }
+    private static var yabaiConfigFileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/yabai/yabairc")
+    }
+    private var yabaiConfigFileURL: URL { Self.yabaiConfigFileURL }
+    private var skhdConfigFileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/skhd/skhdrc")
+    }
+    private var skhdPath: String? {
+        ["/opt/homebrew/bin/skhd", "/usr/local/bin/skhd", "/usr/bin/skhd"]
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+    }
     private var userID: String { String(getuid()) }
     var shouldShowWarning: Bool { isRunning && dataError != nil }
+    var runtimeIsUsable: Bool {
+        !yabaiPath.isEmpty && isRunning && servicePhase == .running && dataError == nil
+    }
+    var runtimeStatusText: String {
+        guard let bundledRuntimeAppPath else { return "This build does not contain its bundled runtime." }
+        if servicePhase == .running && dataError == nil {
+            return "Bundled runtime is connected and responding."
+        }
+        return "Bundled runtime is not connected yet: \(bundledRuntimeAppPath)"
+    }
 
     func startPolling() {
         guard pollingTask == nil else { return }
@@ -2336,16 +2624,221 @@ final class YabaiModel: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func revealBundledRuntime() {
+        guard let bundledRuntimeAppPath else { return }
+        NSWorkspace.shared.selectFile(bundledRuntimeAppPath, inFileViewerRootedAtPath: "/")
+    }
+
+    func persistYabaiConfiguration() {
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: yabaiConfigFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let existing = (try? String(contentsOf: yabaiConfigFileURL, encoding: .utf8)) ?? "# yabUI-managed Yabai configuration\n"
+            let base = Self.removeManagedSection(from: existing, start: managedConfigStart, end: managedConfigEnd)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = [base, yabaiConfigurationBlock].filter { !$0.isEmpty }.joined(separator: "\n\n") + "\n"
+            try content.write(to: yabaiConfigFileURL, atomically: true, encoding: .utf8)
+        } catch {
+            serviceError = "Could not save Yabai configuration: \(error.localizedDescription)"
+        }
+    }
+
+    func installKeyboardShortcuts() {
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: skhdConfigFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let existing = (try? String(contentsOf: skhdConfigFileURL, encoding: .utf8)) ?? "# skhd configuration\n"
+            let base = Self.removeManagedSection(from: existing, start: managedShortcutStart, end: managedShortcutEnd)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = [base, keyboardShortcutBlock].filter { !$0.isEmpty }.joined(separator: "\n\n") + "\n"
+            try content.write(to: skhdConfigFileURL, atomically: true, encoding: .utf8)
+
+            if let skhdPath {
+                let result = Self.executeSystem(skhdPath, ["--reload"])
+                shortcutStatus = result.success
+                    ? "Shortcuts installed and skhd reloaded."
+                    : "Shortcuts saved, but skhd could not reload: \(result.output)"
+            } else {
+                shortcutStatus = "Shortcuts saved to \(skhdConfigFileURL.path). Install skhd to activate them."
+            }
+        } catch {
+            shortcutStatus = "Could not save keyboard shortcuts: \(error.localizedDescription)"
+        }
+    }
+
+    private var yabaiConfigurationBlock: String {
+        let yabai = Self.shellQuote(bundledYabaiPath ?? "yabai")
+        let values: [(String, String)] = [
+            ("external_bar", settings.externalBar),
+            ("menubar_opacity", settings.menubarOpacity),
+            ("mouse_follows_focus", settings.mouseFollowsFocus ? "on" : "off"),
+            ("focus_follows_mouse", settings.focusFollowsMouse),
+            ("display_arrangement_order", settings.displayArrangementOrder),
+            ("window_origin_display", settings.windowOriginDisplay),
+            ("window_placement", settings.windowPlacement),
+            ("window_insertion_point", settings.windowInsertionPoint),
+            ("window_zoom_persist", settings.zoomPersist ? "on" : "off"),
+            ("window_shadow", settings.windowShadow ? "on" : "off"),
+            ("skip_window_focus_animation", settings.skipWindowFocusAnimation ? "on" : "off"),
+            ("window_animation_duration", settings.windowAnimationDuration),
+            ("window_animation_easing", settings.windowAnimationEasing),
+            ("window_opacity_duration", settings.windowOpacityDuration),
+            ("active_window_opacity", settings.activeWindowOpacity),
+            ("normal_window_opacity", settings.normalWindowOpacity),
+            ("window_opacity", settings.windowOpacity ? "on" : "off"),
+            ("insert_feedback_color", settings.insertFeedbackColor),
+            ("split_ratio", settings.splitRatio),
+            ("split_type", settings.splitType),
+            ("auto_balance", settings.autoBalance ? "on" : "off"),
+            ("top_padding", "\(settings.topPadding)"),
+            ("bottom_padding", "\(settings.bottomPadding)"),
+            ("left_padding", "\(settings.leftPadding)"),
+            ("right_padding", "\(settings.rightPadding)"),
+            ("window_gap", "\(settings.windowGap)"),
+            ("layout", settings.layout),
+            ("mouse_modifier", settings.mouseModifier),
+            ("mouse_action1", settings.mouseAction1),
+            ("mouse_action2", settings.mouseAction2),
+            ("mouse_drop_action", settings.mouseDropAction)
+        ]
+        let lines = values.map { "\(yabai) -m config \($0.0) \(Self.shellQuote($0.1))" }
+        return ([managedConfigStart] + lines + [managedConfigEnd]).joined(separator: "\n")
+    }
+
+    private var keyboardShortcutBlock: String {
+        let yabai = Self.shellQuote(bundledYabaiPath ?? "yabai")
+        let prefix = "USER=\"${USER:-$(id -un)}\"; \(yabai) -m"
+        let lines = [
+            "# Window focus",
+            "alt - h : \(prefix) window --focus west",
+            "alt - j : \(prefix) window --focus south",
+            "alt - k : \(prefix) window --focus north",
+            "alt - l : \(prefix) window --focus east",
+            "",
+            "# Window movement and layout",
+            "shift + alt - h : \(prefix) window --swap west",
+            "shift + alt - j : \(prefix) window --swap south",
+            "shift + alt - k : \(prefix) window --swap north",
+            "shift + alt - l : \(prefix) window --swap east",
+            "shift + cmd - h : \(prefix) window --warp west",
+            "shift + cmd - j : \(prefix) window --warp south",
+            "shift + cmd - k : \(prefix) window --warp north",
+            "shift + cmd - l : \(prefix) window --warp east",
+            "alt - d : \(prefix) window --toggle zoom-parent",
+            "alt - f : \(prefix) window --toggle zoom-fullscreen",
+            "alt - e : \(prefix) window --toggle split",
+            "alt - t : \(prefix) window --toggle float",
+            "",
+            "# Spaces",
+            "shift + alt - 0 : \(prefix) space --balance",
+            "cmd + alt - 1 : \(prefix) space --focus 1",
+            "cmd + alt - 2 : \(prefix) space --focus 2",
+            "cmd + alt - 3 : \(prefix) space --focus 3",
+            "cmd + alt - 4 : \(prefix) space --focus 4",
+            "cmd + alt - 5 : \(prefix) space --focus 5",
+            "cmd + alt - 6 : \(prefix) space --focus 6",
+            "cmd + alt - 7 : \(prefix) space --focus 7",
+            "cmd + alt - 8 : \(prefix) space --focus 8",
+            "cmd + alt - 9 : \(prefix) space --focus 9"
+        ]
+        return ([managedShortcutStart] + lines + [managedShortcutEnd]).joined(separator: "\n")
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func removeManagedSection(from content: String, start: String, end: String) -> String {
+        guard let startRange = content.range(of: start),
+              let endRange = content.range(of: end, range: startRange.upperBound..<content.endIndex) else { return content }
+        return content.replacingCharacters(in: startRange.lowerBound..<endRange.upperBound, with: "")
+    }
+
+    private static func readSettings(from url: URL) -> YabaiSettings {
+        var settings = YabaiSettings()
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return settings }
+        let keys: Set<String> = [
+            "external_bar", "menubar_opacity", "mouse_follows_focus", "focus_follows_mouse",
+            "display_arrangement_order", "window_origin_display", "window_placement", "window_insertion_point",
+            "window_zoom_persist", "window_shadow", "skip_window_focus_animation", "window_animation_duration",
+            "window_animation_easing", "window_opacity_duration", "active_window_opacity", "normal_window_opacity",
+            "window_opacity", "insert_feedback_color", "split_ratio", "split_type", "auto_balance",
+            "top_padding", "bottom_padding", "left_padding", "right_padding", "window_gap", "layout",
+            "mouse_modifier", "mouse_action1", "mouse_action2", "mouse_drop_action"
+        ]
+        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.hasPrefix("#") else { continue }
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\\" }).map(String.init)
+            guard let keyIndex = parts.firstIndex(where: { keys.contains($0) }), keyIndex + 1 < parts.count else { continue }
+            let key = parts[keyIndex]
+            let value = parts[keyIndex + 1].trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+            switch key {
+            case "external_bar": settings.externalBar = value
+            case "menubar_opacity": settings.menubarOpacity = value
+            case "mouse_follows_focus": settings.mouseFollowsFocus = value == "on"
+            case "focus_follows_mouse": settings.focusFollowsMouse = value
+            case "display_arrangement_order": settings.displayArrangementOrder = value
+            case "window_origin_display": settings.windowOriginDisplay = value
+            case "window_placement": settings.windowPlacement = value
+            case "window_insertion_point": settings.windowInsertionPoint = value
+            case "window_zoom_persist": settings.zoomPersist = value == "on"
+            case "window_shadow": settings.windowShadow = value == "on"
+            case "skip_window_focus_animation": settings.skipWindowFocusAnimation = value == "on"
+            case "window_animation_duration": settings.windowAnimationDuration = value
+            case "window_animation_easing": settings.windowAnimationEasing = value
+            case "window_opacity_duration": settings.windowOpacityDuration = value
+            case "active_window_opacity": settings.activeWindowOpacity = value
+            case "normal_window_opacity": settings.normalWindowOpacity = value
+            case "window_opacity": settings.windowOpacity = value == "on"
+            case "insert_feedback_color": settings.insertFeedbackColor = value
+            case "split_ratio": settings.splitRatio = value
+            case "split_type": settings.splitType = value
+            case "auto_balance": settings.autoBalance = value == "on"
+            case "top_padding": settings.topPadding = Int(value) ?? settings.topPadding
+            case "bottom_padding": settings.bottomPadding = Int(value) ?? settings.bottomPadding
+            case "left_padding": settings.leftPadding = Int(value) ?? settings.leftPadding
+            case "right_padding": settings.rightPadding = Int(value) ?? settings.rightPadding
+            case "window_gap": settings.windowGap = Int(value) ?? settings.windowGap
+            case "layout": settings.layout = value
+            case "mouse_modifier": settings.mouseModifier = value
+            case "mouse_action1": settings.mouseAction1 = value
+            case "mouse_action2": settings.mouseAction2 = value
+            case "mouse_drop_action": settings.mouseDropAction = value
+            default: break
+            }
+        }
+        return settings
+    }
+
     func applyRecommendedConfiguration() {
+        UserDefaults.standard.set("bsp", forKey: preferredLayoutKey)
+        UserDefaults.standard.set("auto", forKey: preferredSplitTypeKey)
         if !isRunning {
             startService()
             return
         }
+        configureManagedLayout(force: true)
+        refresh()
+    }
+
+    private func configureManagedLayout(force: Bool) {
+        let layout = force ? "bsp" : (UserDefaults.standard.string(forKey: preferredLayoutKey) ?? "bsp")
+        let splitType = force ? "auto" : (UserDefaults.standard.string(forKey: preferredSplitTypeKey) ?? "auto")
+
         setConfig("mouse_follows_focus", "off")
         setConfig("focus_follows_mouse", "off")
-        setSpaceConfig("layout", "bsp")
-        setSpaceConfig("split_type", "auto")
-        refresh()
+        setConfig("layout", layout)
+        setConfig("split_type", splitType)
+
+        for index in spaces.map(\.index) {
+            _ = command(["-m", "config", "--space", "\(index)", "layout", layout])
+            _ = command(["-m", "config", "--space", "\(index)", "split_type", splitType])
+        }
+
+        if layout == "bsp" {
+            rebalanceSpaces(Set(spaces.map(\.index)))
+        }
     }
 
     private func runServiceOperation(_ operation: ServiceOperation) {
@@ -2356,13 +2849,17 @@ final class YabaiModel: ObservableObject {
         case .restart: servicePhase = .restarting
         }
         serviceError = nil
+        if operation != .stop {
+            persistYabaiConfiguration()
+        }
         let path = yabaiPath
+        let config = yabaiConfigFileURL
         let plist = servicePlistURL
         let label = serviceLabel
         let uid = userID
         serviceTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                Self.performServiceOperation(operation, path: path, plist: plist, label: label, uid: uid)
+                Self.performServiceOperation(operation, path: path, config: config, plist: plist, label: label, uid: uid)
             }.value
 
             guard let self else { return }
@@ -2379,7 +2876,11 @@ final class YabaiModel: ObservableObject {
                     self.displays = []
                 } else if !self.isRunning {
                     self.servicePhase = .unavailable
-                    self.serviceError = "The service did not become ready. Check Accessibility permission and try again."
+                    let log = Self.readRuntimeError(uid: uid)
+                    self.serviceError = log ?? "The service did not become ready. Add the bundled runtime to Accessibility and try again."
+                } else if operation != .stop {
+                    self.configureManagedLayout(force: false)
+                    self.refresh()
                 }
             } else {
                 self.servicePhase = .unavailable
@@ -2390,7 +2891,7 @@ final class YabaiModel: ObservableObject {
         }
     }
 
-    private nonisolated static func performServiceOperation(_ operation: ServiceOperation, path: String, plist: URL, label: String, uid: String) -> CommandResult {
+    private nonisolated static func performServiceOperation(_ operation: ServiceOperation, path: String, config: URL, plist: URL, label: String, uid: String) -> CommandResult {
         guard !path.isEmpty else { return CommandResult(success: false, output: "The bundled runtime is missing from this app.") }
         switch operation {
         case .stop:
@@ -2406,15 +2907,18 @@ final class YabaiModel: ObservableObject {
             do {
                 try FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let logPrefix = "/tmp/yabui_runtime_\(uid)"
+                try? FileManager.default.removeItem(atPath: "\(logPrefix).out.log")
+                try? FileManager.default.removeItem(atPath: "\(logPrefix).err.log")
                 let payload: [String: Any] = [
                     "Label": label,
-                    "ProgramArguments": [path],
+                    "ProgramArguments": [path, "--config", config.path],
                     "RunAtLoad": true,
                     "KeepAlive": false,
                     "ThrottleInterval": 5,
                     "ProcessType": "Interactive",
                     "EnvironmentVariables": [
                         "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                        "USER": NSUserName(),
                         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
                     ],
                     "StandardOutPath": "\(logPrefix).out.log",
@@ -2446,6 +2950,15 @@ final class YabaiModel: ObservableObject {
         } catch {
             return CommandResult(success: false, output: error.localizedDescription)
         }
+    }
+
+    private nonisolated static func readRuntimeError(uid: String) -> String? {
+        let url = URL(fileURLWithPath: "/tmp/yabui_runtime_\(uid).err.log")
+        guard let data = try? Data(contentsOf: url),
+              let output = String(data: data, encoding: .utf8) else { return nil }
+        let message = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return nil }
+        return message
     }
 
     private nonisolated static func readSnapshot(path: String) -> RuntimeSnapshot {
@@ -2508,6 +3021,17 @@ final class YabaiModel: ObservableObject {
             spaces = snapshot.spaces
             displays = snapshot.displays
             dataError = snapshot.error
+
+            // Yabai keeps layout configuration in the daemon's memory. An
+            // external restart can therefore bring it back with its default
+            // layout while the app still sees a healthy socket. Reconcile
+            // only when the live space type disagrees with the user's saved
+            // preference, so ordinary polling stays side-effect free.
+            let preferredLayout = UserDefaults.standard.string(forKey: preferredLayoutKey) ?? "bsp"
+            if !snapshot.spaces.isEmpty,
+               snapshot.spaces.contains(where: { $0.layout != preferredLayout }) {
+                configureManagedLayout(force: false)
+            }
         } else {
             isRunning = false
             windows = []
@@ -2527,8 +3051,70 @@ final class YabaiModel: ObservableObject {
     func focusWindow(_ id: Int) { _ = command(["-m", "window", "--focus", "\(id)"]); refresh() }
     func focusSpace(_ index: Int) { _ = command(["-m", "space", "--focus", "\(index)"]); refresh() }
     func focusDisplay(_ index: Int) { _ = command(["-m", "display", "\(index)", "--focus"]); refresh() }
+
+    var currentSpaceIndex: Int? { spaces.first(where: { $0.isFocused })?.index }
+
+    func adjacentSpaceIndex(from spaceIndex: Int, direction: AdjacentSpaceDirection) -> Int? {
+        guard let source = spaces.first(where: { $0.index == spaceIndex }) else { return nil }
+        let ordered = spaces.filter { $0.display == source.display }.sorted { $0.index < $1.index }
+        guard let position = ordered.firstIndex(where: { $0.index == spaceIndex }) else { return nil }
+        switch direction {
+        case .previous:
+            guard position > ordered.startIndex else { return nil }
+            return ordered[ordered.index(before: position)].index
+        case .next:
+            let next = ordered.index(after: position)
+            guard next < ordered.endIndex else { return nil }
+            return ordered[next].index
+        }
+    }
+
+    func createSpace(onDisplay display: Int? = nil) {
+        var arguments = ["-m", "space", "--create"]
+        if let display { arguments.append("\(display)") }
+        let result = command(arguments)
+        if result.success { refresh() }
+    }
+
+    func closeSpace(_ index: Int) {
+        let result = command(["-m", "space", "\(index)", "--destroy"])
+        if result.success { refresh() }
+    }
+
+    func moveWindowToAdjacentSpace(_ id: Int, direction: AdjacentSpaceDirection) {
+        guard let source = windows.first(where: { $0.id == id }),
+              let destination = adjacentSpaceIndex(from: source.space, direction: direction) else { return }
+        moveWindow(id, toSpace: destination)
+    }
+
+    func moveFocusedWindowToAdjacentSpace(_ direction: AdjacentSpaceDirection) {
+        guard let window = windows.first(where: { $0.isFocused }) else { return }
+        moveWindowToAdjacentSpace(window.id, direction: direction)
+    }
+
+    func minimizeAllWindows(in spaceIndex: Int?) {
+        guard let spaceIndex else { return }
+        let candidates = windows.filter {
+            $0.space == spaceIndex && !$0.isMinimized && !$0.isHidden && !$0.isNativeFullscreen
+        }
+        for window in candidates {
+            _ = command(["-m", "window", "\(window.id)", "--minimize"])
+        }
+        refresh()
+    }
+
+    // Yabai calls the inverse of minimize "deminimize". Expose it as
+    // maximize/restore in the UI so the paired controls are easy to find.
+    func maximizeAllWindows(in spaceIndex: Int?) {
+        guard let spaceIndex else { return }
+        let candidates = windows.filter { $0.space == spaceIndex && $0.isMinimized }
+        for window in candidates {
+            _ = command(["-m", "window", "\(window.id)", "--deminimize"])
+        }
+        refresh()
+    }
+
     func moveWindow(_ id: Int, toSpace space: Int) {
-        let movedWindow = windows.first(where: { $0.id == id })
         let focusedWindowID = windows.first(where: { $0.isFocused })?.id
         let sourceSpace = windows.first(where: { $0.id == id })?.space
         let result = command(["-m", "window", "\(id)", "--space", "\(space)"])
@@ -2536,7 +3122,6 @@ final class YabaiModel: ObservableObject {
             reflowAfterWindowMove(
                 windowID: id,
                 sourceSpaces: Set([sourceSpace, space].compactMap { $0 }),
-                movedWindow: movedWindow,
                 focusedWindowID: focusedWindowID
             )
         }
@@ -2544,7 +3129,6 @@ final class YabaiModel: ObservableObject {
     }
 
     func moveWindow(_ id: Int, toDisplay display: Int) {
-        let movedWindow = windows.first(where: { $0.id == id })
         let focusedWindowID = windows.first(where: { $0.isFocused })?.id
         let sourceSpace = windows.first(where: { $0.id == id })?.space
         let result = command(["-m", "window", "\(id)", "--display", "\(display)"])
@@ -2560,7 +3144,6 @@ final class YabaiModel: ObservableObject {
         reflowAfterWindowMove(
             windowID: id,
             sourceSpaces: Set([sourceSpace, destinationSpace].compactMap { $0 }),
-            movedWindow: movedWindow,
             focusedWindowID: focusedWindowID
         )
         refresh()
@@ -2631,7 +3214,6 @@ final class YabaiModel: ObservableObject {
         guard source != target,
               let sourceSpace = windows.first(where: { $0.id == source })?.space,
               let targetSpace = windows.first(where: { $0.id == target })?.space else { return }
-        let movedWindow = windows.first(where: { $0.id == source })
         let focusedWindowID = windows.first(where: { $0.isFocused })?.id
 
         var didMove = true
@@ -2653,7 +3235,6 @@ final class YabaiModel: ObservableObject {
             reflowAfterWindowMove(
                 windowID: source,
                 sourceSpaces: Set([sourceSpace, targetSpace]),
-                movedWindow: movedWindow,
                 focusedWindowID: focusedWindowID
             )
         }
@@ -2714,7 +3295,6 @@ final class YabaiModel: ObservableObject {
         }
     }
     func reorderWindow(_ id: Int, command arguments: [String]) {
-        let movedWindow = windows.first(where: { $0.id == id })
         let focusedWindowID = windows.first(where: { $0.isFocused })?.id
         let sourceSpace = windows.first(where: { $0.id == id })?.space
         let result = command(["-m", "window", "\(id)"] + arguments)
@@ -2724,7 +3304,6 @@ final class YabaiModel: ObservableObject {
             reflowAfterWindowMove(
                 windowID: id,
                 sourceSpaces: Set([sourceSpace, destinationSpace].compactMap { $0 }),
-                movedWindow: movedWindow,
                 focusedWindowID: focusedWindowID
             )
         }
@@ -2735,17 +3314,14 @@ final class YabaiModel: ObservableObject {
             _ = command(["-m", "space", "\(index)", "--balance"])
         }
     }
-    private func reflowAfterWindowMove(windowID: Int, sourceSpaces: Set<Int>, movedWindow: YabaiWindow?, focusedWindowID: Int?) {
+    private func reflowAfterWindowMove(windowID: Int, sourceSpaces: Set<Int>, focusedWindowID: Int?) {
         rebalanceSpaces(sourceSpaces)
 
-        // Yabai can leave an unfocused window with its old frame after a
-        // cross-space move. A focus round-trip forces WindowServer to apply
-        // the new geometry, then restores the user's original focus.
-        if let movedWindow, movedWindow.isRenderable,
-           let focusedWindowID, focusedWindowID != windowID {
-            _ = command(["-m", "window", "\(windowID)", "--focus"])
+        // Rebalancing is enough to update the source and destination frames.
+        // If Yabai changed focus as a side effect of the move, restore the
+        // original window directly; never focus the moved window transiently.
+        if let focusedWindowID, focusedWindowID != windowID {
             _ = command(["-m", "window", "\(focusedWindowID)", "--focus"])
-            rebalanceSpaces(sourceSpaces)
         }
     }
     func spaceCommand(_ index: Int, _ arguments: [String]) {
@@ -2754,16 +3330,95 @@ final class YabaiModel: ObservableObject {
     }
     func windowAction(_ action: String) { _ = command(["-m", "window"] + action.split(separator: " ").map(String.init)); refresh() }
     func spaceAction(_ action: String) { _ = command(["-m", "space"] + action.split(separator: " ").map(String.init)); refresh() }
-    func setConfig(_ key: String, _ value: String) { _ = command(["-m", "config", key, value]) }
-    func setSpaceConfig(_ key: String, _ value: String) { _ = command(["-m", "config", "--space", "\(focusedSpaceIndex)", key, value]) }
+    func setConfig(_ key: String, _ value: String) {
+        _ = command(["-m", "config", key, value])
+        updateSetting(key, value)
+        persistYabaiConfiguration()
+    }
+    func setSpaceConfig(_ key: String, _ value: String) {
+        if key == "layout" {
+            UserDefaults.standard.set(value, forKey: preferredLayoutKey)
+        } else if key == "split_type" {
+            UserDefaults.standard.set(value, forKey: preferredSplitTypeKey)
+        }
+        _ = command(["-m", "config", "--space", "\(focusedSpaceIndex)", key, value])
+        updateSetting(key, value)
+        persistYabaiConfiguration()
+    }
     func refreshSettings() {
-        guard isRunning else { return }
+        guard isRunning else {
+            settings = Self.readSettings(from: yabaiConfigFileURL)
+            return
+        }
+        func read(_ key: String) -> String? { readConfig(key) }
+        settings.externalBar = read("external_bar") ?? settings.externalBar
+        settings.menubarOpacity = read("menubar_opacity") ?? settings.menubarOpacity
         settings.mouseFollowsFocus = readConfigBool("mouse_follows_focus")
-        settings.windowOpacity = readConfigBool("window_opacity")
+        settings.focusFollowsMouse = read("focus_follows_mouse") ?? settings.focusFollowsMouse
+        settings.displayArrangementOrder = read("display_arrangement_order") ?? settings.displayArrangementOrder
+        settings.windowOriginDisplay = read("window_origin_display") ?? settings.windowOriginDisplay
+        settings.windowPlacement = read("window_placement") ?? settings.windowPlacement
+        settings.windowInsertionPoint = read("window_insertion_point") ?? settings.windowInsertionPoint
         settings.zoomPersist = readConfigBool("window_zoom_persist")
-        settings.focusFollowsMouse = readConfig("focus_follows_mouse") ?? "off"
-        settings.layout = readConfig("layout", space: true) ?? "bsp"
-        settings.splitType = readConfig("split_type", space: true) ?? "auto"
+        settings.windowShadow = readConfigBool("window_shadow")
+        settings.skipWindowFocusAnimation = readConfigBool("skip_window_focus_animation")
+        settings.windowAnimationDuration = read("window_animation_duration") ?? settings.windowAnimationDuration
+        settings.windowAnimationEasing = read("window_animation_easing") ?? settings.windowAnimationEasing
+        settings.windowOpacityDuration = read("window_opacity_duration") ?? settings.windowOpacityDuration
+        settings.activeWindowOpacity = read("active_window_opacity") ?? settings.activeWindowOpacity
+        settings.normalWindowOpacity = read("normal_window_opacity") ?? settings.normalWindowOpacity
+        settings.windowOpacity = readConfigBool("window_opacity")
+        settings.insertFeedbackColor = read("insert_feedback_color") ?? settings.insertFeedbackColor
+        settings.splitRatio = read("split_ratio") ?? settings.splitRatio
+        settings.autoBalance = readConfigBool("auto_balance")
+        settings.topPadding = Int(read("top_padding") ?? "") ?? settings.topPadding
+        settings.bottomPadding = Int(read("bottom_padding") ?? "") ?? settings.bottomPadding
+        settings.leftPadding = Int(read("left_padding") ?? "") ?? settings.leftPadding
+        settings.rightPadding = Int(read("right_padding") ?? "") ?? settings.rightPadding
+        settings.windowGap = Int(read("window_gap") ?? "") ?? settings.windowGap
+        settings.layout = readConfig("layout", space: true) ?? settings.layout
+        settings.splitType = readConfig("split_type", space: true) ?? settings.splitType
+        settings.mouseModifier = read("mouse_modifier") ?? settings.mouseModifier
+        settings.mouseAction1 = read("mouse_action1") ?? settings.mouseAction1
+        settings.mouseAction2 = read("mouse_action2") ?? settings.mouseAction2
+        settings.mouseDropAction = read("mouse_drop_action") ?? settings.mouseDropAction
+    }
+
+    private func updateSetting(_ key: String, _ value: String) {
+        switch key {
+        case "external_bar": settings.externalBar = value
+        case "menubar_opacity": settings.menubarOpacity = value
+        case "mouse_follows_focus": settings.mouseFollowsFocus = value == "on"
+        case "focus_follows_mouse": settings.focusFollowsMouse = value
+        case "display_arrangement_order": settings.displayArrangementOrder = value
+        case "window_origin_display": settings.windowOriginDisplay = value
+        case "window_placement": settings.windowPlacement = value
+        case "window_insertion_point": settings.windowInsertionPoint = value
+        case "window_zoom_persist": settings.zoomPersist = value == "on"
+        case "window_shadow": settings.windowShadow = value == "on"
+        case "skip_window_focus_animation": settings.skipWindowFocusAnimation = value == "on"
+        case "window_animation_duration": settings.windowAnimationDuration = value
+        case "window_animation_easing": settings.windowAnimationEasing = value
+        case "window_opacity_duration": settings.windowOpacityDuration = value
+        case "active_window_opacity": settings.activeWindowOpacity = value
+        case "normal_window_opacity": settings.normalWindowOpacity = value
+        case "window_opacity": settings.windowOpacity = value == "on"
+        case "insert_feedback_color": settings.insertFeedbackColor = value
+        case "split_ratio": settings.splitRatio = value
+        case "auto_balance": settings.autoBalance = value == "on"
+        case "top_padding": settings.topPadding = Int(value) ?? settings.topPadding
+        case "bottom_padding": settings.bottomPadding = Int(value) ?? settings.bottomPadding
+        case "left_padding": settings.leftPadding = Int(value) ?? settings.leftPadding
+        case "right_padding": settings.rightPadding = Int(value) ?? settings.rightPadding
+        case "window_gap": settings.windowGap = Int(value) ?? settings.windowGap
+        case "layout": settings.layout = value
+        case "split_type": settings.splitType = value
+        case "mouse_modifier": settings.mouseModifier = value
+        case "mouse_action1": settings.mouseAction1 = value
+        case "mouse_action2": settings.mouseAction2 = value
+        case "mouse_drop_action": settings.mouseDropAction = value
+        default: break
+        }
     }
 
     private func readConfigBool(_ key: String) -> Bool { readConfig(key) == "on" }
@@ -2775,7 +3430,7 @@ final class YabaiModel: ObservableObject {
         return result.success ? result.output.trimmingCharacters(in: .whitespacesAndNewlines) : nil
     }
 
-    private var focusedSpaceIndex: Int { spaces.first(where: { $0.isFocused })?.index ?? 1 }
+    private var focusedSpaceIndex: Int { currentSpaceIndex ?? 1 }
     private func decode<T: Decodable>(_ args: [String], label: String, as type: T.Type) -> T? {
         let result = command(args, record: false)
         guard result.success, let data = result.output.data(using: .utf8) else {
